@@ -481,7 +481,7 @@ def in_home_base():
         Asset_Manager.upgrader_assets["home_gold"],
         grayscale=False,
         prefilter=True,
-        thresh=0.9
+        thresh=0.7
     ) != (None, None)
 
 def to_home_base(ref_cache=False):
@@ -600,7 +600,7 @@ def in_builder_base():
         Asset_Manager.upgrader_assets["builder_gold"],
         grayscale=False,
         prefilter=True,
-        thresh=0.9
+        thresh=0.7
     ) != (None, None)
 
 def to_builder_base(ref_cache=False):
@@ -1599,9 +1599,9 @@ class Frame_Handler:
         if use_cached and cls.cached_frame is not None:
             frame = cls.cached_frame.copy()
         else:
-            try: frame = ADB_Manager.adbutils_device_no_retry.framebuffer() # faster than screenshot but potentially unstable
-            except (KeyboardInterrupt, SystemExit): raise
-            except: frame = ADB_Manager.adbutils_device.screenshot()
+            # # # try: frame = ADB_Manager.adbutils_device_no_retry.framebuffer() # faster than screenshot but potentially unstable
+            # except (KeyboardInterrupt, SystemExit): raise
+            frame = ADB_Manager.adbutils_device.screenshot()
             frame = np.array(frame)[..., :3]
             frame = cv2.resize(frame, WINDOW_DIMS, interpolation=cv2.INTER_NEAREST)
             cls.cached_frame = frame.copy()

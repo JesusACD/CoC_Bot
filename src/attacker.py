@@ -17,25 +17,25 @@ class Attacker:
     
     def _click_okay(self, timeout=5):
         return click_with_timeout(
-            lambda: Frame_Handler.locate(self.assets["okay"], thresh=0.9),
+            lambda: Frame_Handler.locate(self.assets["okay"], thresh=0.7),
             timeout=timeout,
         )
     
     def _click_surrender(self, timeout=5):
         return click_with_timeout(
-            lambda: Frame_Handler.locate(self.assets["surrender"], thresh=0.9),
+            lambda: Frame_Handler.locate(self.assets["surrender"], thresh=0.7),
             timeout=timeout
         )
     
     def _click_end_battle(self, timeout=5):
         return click_with_timeout(
-            lambda: Frame_Handler.locate(self.assets["end_battle"], thresh=0.9),
+            lambda: Frame_Handler.locate(self.assets["end_battle"], thresh=0.7),
             timeout=timeout
         )
     
     def _click_return_home(self, timeout=5):
         return click_with_timeout(
-            lambda: Frame_Handler.locate(self.assets["return_home"], thresh=0.9),
+            lambda: Frame_Handler.locate(self.assets["return_home"], thresh=0.7),
             timeout=timeout
         )
 
@@ -50,9 +50,9 @@ class Attacker:
         battle_temp = render_text("Battle", "SupercellMagic", 37)
         def locate_find_a_match():
             frame = Frame_Handler.get_frame(grayscale=True, high_contrast=True)
-            bx, by = Frame_Handler.locate(battle_temp, frame, thresh=0.9)
+            bx, by = Frame_Handler.locate(battle_temp, frame, thresh=0.7)
             if bx is None or by is None: return None, None
-            xys = Frame_Handler.locate(find_a_match_temp, frame, thresh=0.9, return_all=True)
+            xys = Frame_Handler.locate(find_a_match_temp, frame, thresh=0.7, return_all=True)
             if xys == [[None, None]]: return None, None
             xys = np.array(xys)
             dists = abs(xys[:, 0] - bx)
@@ -69,7 +69,7 @@ class Attacker:
 
         # Confirm attack
         if not click_with_timeout(
-            lambda: Frame_Handler.locate(self.assets["confirm_attack"], thresh=0.9),
+            lambda: Frame_Handler.locate(self.assets["confirm_attack"], thresh=0.7),
             timeout=5
         ):
             logger.error("Failed to confirm attack")
@@ -78,7 +78,7 @@ class Attacker:
         # Wait until "end battle" button is found
         start_time = time.time()
         while time.time() - start_time < timeout:
-            x, y = Frame_Handler.locate(self.assets["end_battle"], thresh=0.9)
+            x, y = Frame_Handler.locate(self.assets["end_battle"], thresh=0.7)
             if x is not None and y is not None: return True
             time.sleep(0.1)
         logger.error("Failed to search for attack")
@@ -92,7 +92,7 @@ class Attacker:
         
         # Find a match
         if not click_with_timeout(
-            lambda: Frame_Handler.locate(self.assets["find_now"], thresh=0.9),
+            lambda: Frame_Handler.locate(self.assets["find_now"], thresh=0.7),
             timeout=5
         ): return False
         
@@ -100,7 +100,7 @@ class Attacker:
         start_time = time.time()
         while time.time() - start_time < timeout:
             section = Frame_Handler.get_frame_section(0, 0, 1, 0.1, grayscale=True, high_contrast=True, thresh=150)
-            x, y = Frame_Handler.locate(self.assets["battle_starts_in"], section, thresh=0.9)
+            x, y = Frame_Handler.locate(self.assets["battle_starts_in"], section, thresh=0.7)
             if x is not None and y is not None: return True
             time.sleep(0.1)
         return False
@@ -291,7 +291,7 @@ class Attacker:
             Input_Handler.swipe_left(x1=card_centers[-1], x2=0.038, y=0.9, hold_end_time=500)
             time.sleep(0.5)
             frame = Frame_Handler.get_frame_section(0.0, 0.82, 1.0, 1.0, grayscale=False)
-            last_card_left = Frame_Handler.locate(last_card_frame, frame, thresh=0.9, grayscale=False, ref="lc")[0]
+            last_card_left = Frame_Handler.locate(last_card_frame, frame, thresh=0.7, grayscale=False, ref="lc")[0]
             # If the card didn't move then there are no more troops so it can be deployed
             if last_card_left is not None and abs(last_card_left - card_boundaries[-2]) < 0.01:
                 self.deploy_troops(card_centers[-1:], available_slots[-1:], card_types[-1:], card_counts[-1:])

@@ -40,7 +40,7 @@ class Upgrader:
             scale_templates.append(cv2.resize(self.assets["upgrade"], (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST))
         
         def locate():
-            xys = Frame_Handler.batch_locate(scale_templates, thresh=0.90, grayscale=False)
+            xys = Frame_Handler.batch_locate(scale_templates, thresh=0.7, grayscale=False)
             for x, y in xys:
                 if x is None or y is None: continue
                 return x, y
@@ -50,7 +50,7 @@ class Upgrader:
 
     def _click_home_confirm(self, timeout=5):
         return click_with_timeout(
-            lambda: Frame_Handler.locate(self.assets["confirm"], grayscale=False, thresh=0.85, use_cached=True),
+            lambda: Frame_Handler.locate(self.assets["confirm"], grayscale=False, thresh=0.7, use_cached=True),
             timeout=timeout
         )
 
@@ -80,7 +80,7 @@ class Upgrader:
             start = time.time()
             while time.time() < start + timeout:
                 try:
-                    section = Frame_Handler.get_frame_section(0.89, 0.75, -0.07, -0.21, high_contrast=True, use_cached=use_cached_frame)
+                    section = Frame_Handler.get_frame_section(0.85, 0.75, -0.06, -0.21, high_contrast=True, use_cached=use_cached_frame)
                     if configs.DEBUG: Frame_Handler.save_frame(section, "home_builders.png")
                     
                     # Find the backslash
@@ -93,7 +93,7 @@ class Upgrader:
                         ref="lc",
                         return_confidence=True
                     )
-                    if c < 0.9: continue
+                    if c < 0.65: continue
 
                     section = Frame_Handler.crop(section, 0, 0, x, 1)
 
@@ -110,7 +110,7 @@ class Upgrader:
                         return_confidence=True
                     )
                     xs, ys, cs = zip(*xycs)
-                    if max(cs) < 0.8: continue
+                    if max(cs) < 0.65: continue
                     available = np.argmax(cs) % 10
                     return available
                 except (KeyboardInterrupt, SystemExit): raise
@@ -126,7 +126,7 @@ class Upgrader:
         start = time.time()
         while time.time() < start + timeout:
             try:
-                section = Frame_Handler.get_frame_section(0.89, 0.75, -0.07, -0.21, high_contrast=True, use_cached=use_cached_frame)
+                section = Frame_Handler.get_frame_section(0.85, 0.75, -0.06, -0.21, high_contrast=True, use_cached=use_cached_frame)
                 if configs.DEBUG: Frame_Handler.save_frame(section, "builder_builders.png")
                 
                 # Find the backslash
@@ -139,7 +139,7 @@ class Upgrader:
                     grayscale=True,
                     return_confidence=True
                 )
-                if c < 0.9: continue
+                if c < 0.65: continue
 
                 section = Frame_Handler.crop(section, 0, 0, x, 1)
 
@@ -156,7 +156,7 @@ class Upgrader:
                     return_confidence=True
                 )
                 xs, ys, cs = zip(*xycs)
-                if max(cs) < 0.8: continue
+                if max(cs) < 0.65: continue
                 available = np.argmax(cs) % 10
                 return available
             except (KeyboardInterrupt, SystemExit): raise
@@ -185,7 +185,7 @@ class Upgrader:
                     grayscale=True,
                     return_confidence=True
                 )
-                if c < 0.9: continue
+                if c < 0.65: continue
 
                 section = Frame_Handler.crop(section, 0, 0, x, 1)
 
@@ -202,7 +202,7 @@ class Upgrader:
                     return_confidence=True
                 )
                 xs, ys, cs = zip(*xycs)
-                if max(cs) < 0.8: continue
+                if max(cs) < 0.65: continue
                 available = np.argmax(cs) % 10
                 return available > 0
             except (KeyboardInterrupt, SystemExit): raise
@@ -231,7 +231,7 @@ class Upgrader:
                     grayscale=True,
                     return_confidence=True
                 )
-                if c < 0.9: continue
+                if c < 0.65: continue
 
                 section = Frame_Handler.crop(section, 0, 0, x, 1)
 
@@ -248,7 +248,7 @@ class Upgrader:
                     return_confidence=True
                 )
                 xs, ys, cs = zip(*xycs)
-                if max(cs) < 0.8: continue
+                if max(cs) < 0.65: continue
                 available = np.argmax(cs) % 10
                 return available > 0
             except (KeyboardInterrupt, SystemExit): raise
@@ -280,7 +280,7 @@ class Upgrader:
                         grayscale=True,
                         return_confidence=True
                     )
-                    if c < 0.9: continue
+                    if c < 0.65: continue
 
                     section = Frame_Handler.crop(section, 0, 0, x, 1)
 
@@ -297,7 +297,7 @@ class Upgrader:
                         return_confidence=True
                     )
                     xs, ys, cs = zip(*xycs)
-                    if max(cs) < 0.8: continue
+                    if max(cs) < 0.65: continue
                     available = np.argmax(cs) % 10
                     return available > 0
                 except (KeyboardInterrupt, SystemExit): raise
@@ -324,7 +324,7 @@ class Upgrader:
         time.sleep(0.5)
         
         # Collect elixir
-        x, y = Frame_Handler.locate(self.assets["collect"], grayscale=False, thresh=0.9)
+        x, y = Frame_Handler.locate(self.assets["collect"], grayscale=False, thresh=0.7)
         if x is not None and y is not None:
             Input_Handler.click(x, y)
             time.sleep(0.1)
@@ -357,7 +357,7 @@ class Upgrader:
 
     def _get_upgrade_name(self, categories=["all"]):
         import numpy as np
-        x, y = Frame_Handler.locate(self.assets["upgrade_name"], ref="lc", thresh=0.9)
+        x, y = Frame_Handler.locate(self.assets["upgrade_name"], ref="lc", thresh=0.7)
         assert x is not None and y is not None, "Failed to locate upgrade name"
         section = Frame_Handler.get_frame_section(x+0.122, y-0.04, 1-x, y+0.035, high_contrast=True, thresh=255, use_cached=True)
         if configs.DEBUG: Frame_Handler.save_frame(section, "upgrade_name.png")
@@ -711,7 +711,7 @@ class Upgrader:
             time.sleep(0.5)
             
             # Find assign assistant label
-            xys = Frame_Handler.locate(self.assets["assign_assistant"], thresh=0.9, grayscale=False, return_all=True)
+            xys = Frame_Handler.locate(self.assets["assign_assistant"], thresh=0.7, grayscale=False, return_all=True)
             if len(xys) == 0: return
             
             x, y = sorted(xys, key=lambda pair: pair[1])[0]
@@ -721,7 +721,7 @@ class Upgrader:
             time.sleep(0.5)
             
             # Find confirm button
-            x, y = Frame_Handler.locate(self.assets["confirm_assistant"], grayscale=False, thresh=0.9)
+            x, y = Frame_Handler.locate(self.assets["confirm_assistant"], grayscale=False, thresh=0.7)
             if x is None or y is None: return
             
             Input_Handler.click(x, y)
@@ -925,7 +925,7 @@ class Upgrader:
             time.sleep(0.5)
             
             # Find assign assistant label
-            xys = Frame_Handler.locate(self.assets["assign_assistant"], thresh=0.9, grayscale=False, return_all=True)
+            xys = Frame_Handler.locate(self.assets["assign_assistant"], thresh=0.7, grayscale=False, return_all=True)
             if len(xys) == 0: return
             
             x, y = sorted(xys, key=lambda pair: pair[1])[0]
@@ -935,7 +935,7 @@ class Upgrader:
             time.sleep(0.5)
             
             # Find confirm button
-            x, y = Frame_Handler.locate(self.assets["confirm_assistant"], grayscale=False, thresh=0.9)
+            x, y = Frame_Handler.locate(self.assets["confirm_assistant"], grayscale=False, thresh=0.7)
             if x is None or y is None: return
             
             Input_Handler.click(x, y)
