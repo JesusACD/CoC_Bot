@@ -497,6 +497,48 @@ def extend_pythonanywhere_hosting(username, password):
     )
     assert res.url == webapps_url
 
+BUILDER_BASE_LOCKED_COOLDOWN = 3600  # 1 hour
+
+def _get_builder_base_state(instance_id=None):
+    inst_id = instance_id if instance_id is not None else INSTANCE_ID
+    if inst_id in (None, ""):
+        return TEMP_CACHE.get("builder_base_state", {}).get("__default__", {})
+    return Cache_Manager.get("builder_base_state", {}).get(inst_id, {})
+
+def mark_builder_base_unlocked(instance_id=None):
+    inst_id = instance_id if instance_id is not None else INSTANCE_ID
+    entry = {"unlocked": True, "locked_until": 0}
+    if inst_id in (None, ""):
+        TEMP_CACHE.setdefault("builder_base_state", {})["__default__"] = entry
+        return
+    states = dict(Cache_Manager.get("builder_base_state", {}))
+    current = states.get(inst_id, {})
+    if current.get("unlocked") is True and current.get("locked_until", 0) == 0:
+        return
+    states[inst_id] = entry
+    Cache_Manager["builder_base_state"] = states
+
+def mark_builder_base_locked(instance_id=None, cooldown=BUILDER_BASE_LOCKED_COOLDOWN):
+    import time
+    inst_id = instance_id if instance_id is not None else INSTANCE_ID
+    if _get_builder_base_state(inst_id).get("unlocked") is True:
+        return False
+    entry = {"unlocked": False, "locked_until": time.time() + cooldown}
+    if inst_id in (None, ""):
+        TEMP_CACHE.setdefault("builder_base_state", {})["__default__"] = entry
+        return True
+    states = dict(Cache_Manager.get("builder_base_state", {}))
+    states[inst_id] = entry
+    Cache_Manager["builder_base_state"] = states
+    return True
+
+def is_builder_base_locked(instance_id=None):
+    import time
+    state = _get_builder_base_state(instance_id)
+    if state.get("unlocked") is True:
+        return False
+    return time.time() < state.get("locked_until", 0)
+
 def detect_village(use_cached=False, thresh=0.7):
     """Detect whether the current screen is 'home_base', 'builder_base', or None by comparing both gold icons."""
     frame = Frame_Handler.get_frame(grayscale=False, use_cached=use_cached)
@@ -516,7 +558,10 @@ def detect_village(use_cached=False, thresh=0.7):
     )
     if home_conf < thresh and builder_conf < thresh:
         return None
-    return "home_base" if home_conf >= builder_conf else "builder_base"
+    village = "home_base" if home_conf >= builder_conf else "builder_base"
+    if village == "builder_base":
+        mark_builder_base_unlocked()
+    return village
 
 def in_home_base(use_cached=False):
     return detect_village(use_cached=use_cached) == "home_base"
@@ -650,20 +695,69 @@ def update_coc(timeout=10, from_in_game=False):
         pass
     if not from_in_game: to_system_home()
 
+def _locate_boat_icon(frame=None, require_color=True):
+    import cv2, numpy as np
+
+    scale_templates = [
+        cv2.resize(Asset_Manager.misc_assets["boat_icon"], None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+        for scale in np.arange(0.41, 0.51, 0.02)
+    ]
+    if frame is None:
+        frame = Frame_Handler.get_frame(grayscale=not require_color)
+    xys = Frame_Handler.batch_locate(
+        scale_templates,
+        frame,
+        grayscale=not require_color,
+        thresh=0.72 if require_color else 0.7,
+        ref="cc",
+        return_confidence=True,
+    )
+    candidates = sorted(
+        [(x, y, c) for x, y, c in xys if x is not None and y is not None],
+        key=lambda item: item[2],
+        reverse=True,
+    )
+    for x, y, _ in candidates:
+        if require_color:
+            patch = Frame_Handler.crop(
+                frame,
+                max(0.0, x - 0.02),
+                max(0.0, y - 0.03),
+                min(1.0, x + 0.02),
+                min(1.0, y + 0.03),
+            )
+            if patch.size == 0:
+                continue
+            cyan = (patch[..., 0] < 150) & (patch[..., 1] > 190) & (patch[..., 2] > 210)
+            red_sail = (patch[..., 0] > 150) & (patch[..., 1] < 90) & (patch[..., 2] < 90)
+            if cyan.mean() < 0.02 or red_sail.mean() < 0.01:
+                continue
+        return x, y
+    return None, None
+
 def in_builder_base(use_cached=False):
     return detect_village(use_cached=use_cached) == "builder_base"
 
 def to_builder_base(ref_cache=False):
-    import cv2, time, numpy as np
-    
+    import time
+
+    if is_builder_base_locked():
+        logger.info(f"Builder base not unlocked yet for instance '{INSTANCE_ID}'; skipping.")
+        return False
+
     if ref_cache and TEMP_CACHE.get("location") == "builder_base":
         if in_builder_base():
+            mark_builder_base_unlocked()
             return True
-    
+
     if in_builder_base():
         TEMP_CACHE["location"] = "builder_base"
+        mark_builder_base_unlocked()
         return True
-    
+
+    Input_Handler.click_exit(x=0.99, y=0.01, n=2, delay=0.1)
+    started_in_home = in_home_base()
+
     for _ in range(3):
         Input_Handler.zoom(dir="in")
     for _ in range(2):
@@ -671,34 +765,42 @@ def to_builder_base(ref_cache=False):
     for _ in range(3):
         Input_Handler.swipe_right()
         Input_Handler.swipe_up()
-    
-    scale_templates = []
-    for scale in np.arange(0.41, 0.51, 0.02):
-        scale_templates.append(cv2.resize(Asset_Manager.misc_assets["boat_icon"], None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST))
 
-    for _ in range(5):
-        xys = Frame_Handler.batch_locate(scale_templates, grayscale=True, thresh=0.7, ref="cc")
-        clicked = False
-        for x, y in xys:
-            if x is None or y is None: continue
+    known_unlocked = _get_builder_base_state().get("unlocked", False)
+    max_attempts = 5 if known_unlocked else 3
+    boat_seen = False
+
+    for _ in range(max_attempts):
+        frame = Frame_Handler.get_frame(grayscale=False)
+        x, y = _locate_boat_icon(frame, require_color=True)
+        if x is not None and y is not None:
+            boat_seen = True
             Input_Handler.click(x, y)
-            clicked = True
-            break
-        if clicked:
             wait_start = time.time()
             while time.time() - wait_start < 6:
                 time.sleep(1)
                 if in_builder_base():
                     TEMP_CACHE["location"] = "builder_base"
+                    mark_builder_base_unlocked()
                     logger.info("Switched to builder base.")
                     return True
+            Input_Handler.click_exit(x=0.99, y=0.01, n=2, delay=0.1)
         Input_Handler.swipe(x1=0.5, y1=0.5, x2=0.25, y2=0.75, hold_end_time=100)
-    
+
+    Input_Handler.click_exit(x=0.99, y=0.01, n=2, delay=0.1)
     current = detect_village()
     if current is not None:
         TEMP_CACHE["location"] = current
     else:
         TEMP_CACHE.pop("location", None)
+
+    if not known_unlocked and not boat_seen and (started_in_home or current == "home_base"):
+        mark_builder_base_locked()
+        logger.info(
+            f"Builder base appears locked or unrepaired for instance '{INSTANCE_ID}'; skipping builder base for 60 min."
+        )
+        return False
+
     logger.warning(f"Failed to switch to builder base (detected village: {current}).")
     return False
 

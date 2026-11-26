@@ -39,6 +39,8 @@ class CoC_Bot:
             exclude_builder_lab = Task_Handler.excluded("builder_lab", use_cached=True)
             skip_builder_base_upgrades = exclude_builder_base and exclude_builder_lab
             exclude_builder_attacks = Task_Handler.excluded("builder_attacks", use_cached=True)
+            builder_locked = is_builder_base_locked()
+            want_builder_base = (not skip_builder_base_upgrades or not exclude_builder_attacks) and not builder_locked
             
             # Check home base
             in_home = True
@@ -51,27 +53,29 @@ class CoC_Bot:
                     self.upgrader.run_home_base(exclude_home_base, exclude_home_lab, exclude_pets)
                 if not exclude_home_attacks:
                     logger.info("Attacking home base")
-                    self.attacker.run_home_base(restart=not skip_home_base_upgrades or not skip_builder_base_upgrades)
+                    self.attacker.run_home_base(restart=want_builder_base)
             else:
                 logger.error("Could not confirm home base; skipping home base tasks to avoid acting on builder base.")
             
             # Check builder base
             in_builder = False
-            if not skip_builder_base_upgrades or not exclude_builder_attacks:
+            if want_builder_base:
                 in_builder = to_builder_base(ref_cache=True)
+                if in_builder:
+                    if not skip_builder_base_upgrades:
+                        logger.info("Upgrading builder base")
+                        self.upgrader.collect_builder_attack_elixir()
+                        self.upgrader.run_builder_base(exclude_builder_base, exclude_builder_lab)
+                    if not exclude_builder_attacks:
+                        logger.info("Attacking builder base")
+                        self.attacker.run_builder_base()
+                elif not is_builder_base_locked():
+                    logger.warning("Could not confirm builder base; skipping builder base tasks.")
+            elif builder_locked and (not skip_builder_base_upgrades or not exclude_builder_attacks):
+                logger.info("Builder base not unlocked yet; skipping builder base tasks.")
             
-            if in_builder:
-                if not skip_builder_base_upgrades:
-                    logger.info("Upgrading builder base")
-                    self.upgrader.collect_builder_attack_elixir()
-                    self.upgrader.run_builder_base(exclude_builder_base, exclude_builder_lab)
-                if not exclude_builder_attacks:
-                    logger.info("Attacking builder base")
-                    self.attacker.run_builder_base()
-            elif not skip_builder_base_upgrades or not exclude_builder_attacks:
-                logger.error("Could not confirm builder base; skipping builder base tasks.")
-            
-            to_home_base()
+            if in_builder or not in_home or TEMP_CACHE.get("location") != "home_base":
+                to_home_base()
             stop_coc(sleep=configs.SUSPEND_EMULATOR_ON_IDLE)
             update_status(time.time())
             return True
