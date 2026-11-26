@@ -663,6 +663,52 @@ def start_coc(timeout=60, detailed=False):
         if not detailed: return False
         else: return False, "error"
 
+def dismiss_reward_popups():
+    """Dismiss full-screen Continue / Skip reward modals (e.g. Treasure Chests / Temporary Storage) if present."""
+    import time
+
+    cont_templates = [
+        Frame_Handler.grayscale(render_text("Continue", "SupercellMagic", s))
+        for s in range(28, 36, 2)
+    ]
+    skip_templates = [
+        Frame_Handler.grayscale(render_text("Skip", "SupercellMagic", s))
+        for s in range(22, 28, 2)
+    ]
+    dismissed = False
+    skip_clicked = False
+    for _ in range(8):
+        hc_frame = Frame_Handler.get_frame(high_contrast=True, thresh=240)
+        clicked = False
+        for x, y in Frame_Handler.batch_locate(
+            cont_templates, hc_frame, grayscale=False, thresh=0.75, prefilter=False, ref="cc"
+        ):
+            if x is not None and y is not None:
+                logger.info(f"Dismissing reward modal ('Continue' at {x:.2f}, {y:.2f})")
+                Input_Handler.click(x, y)
+                clicked = True
+                dismissed = True
+                time.sleep(0.8)
+                break
+        if clicked:
+            continue
+        if not skip_clicked:
+            for x, y in Frame_Handler.batch_locate(
+                skip_templates, hc_frame, grayscale=False, thresh=0.78, prefilter=False, ref="cc"
+            ):
+                if x is not None and y is not None:
+                    logger.info(f"Skipping reward animation ('Skip' at {x:.2f}, {y:.2f})")
+                    Input_Handler.click(x, y)
+                    skip_clicked = True
+                    clicked = True
+                    dismissed = True
+                    time.sleep(0.8)
+                    break
+        if not clicked:
+            break
+    Input_Handler.click_exit(x=0.99, y=0.01, n=2, delay=0.1)
+    return dismissed
+
 def stop_coc(sleep=False, timeout=60):
     import time
     logger.info("Stopping CoC...")
@@ -1603,6 +1649,16 @@ class ADB_Manager:
 
 class Input_Handler:
     @classmethod
+    def _publish(cls, builder):
+        try:
+            builder.publish(ADB_Manager.minitouch_device.connection)
+        except OSError:
+            logger.warning("minitouch connection lost; reconnecting ADB...")
+            if not ADB_Manager.connect():
+                raise
+            builder.publish(ADB_Manager.minitouch_device.connection)
+
+    @classmethod
     def _to_raw(cls, x_frac, y_frac):
         raw_w = int(ADB_Manager.minitouch_device.connection.max_x)
         raw_h = int(ADB_Manager.minitouch_device.connection.max_y)
@@ -1628,7 +1684,7 @@ class Input_Handler:
         elif isinstance(pointer, (list, tuple)):
             for p in enumerate(pointer):
                 builder.down(p, x, y, 100)
-        builder.publish(ADB_Manager.minitouch_device.connection)
+        cls._publish(builder)
 
     @classmethod
     def up(cls, pointer=0):
@@ -1639,7 +1695,7 @@ class Input_Handler:
         elif isinstance(pointer, (list, tuple)):
             for p in enumerate(pointer):
                 builder.up(p)
-        builder.publish(ADB_Manager.minitouch_device.connection)
+        cls._publish(builder)
 
     @classmethod
     def click(cls, x, y, n=1, delay=0, pointer=0):
@@ -1653,7 +1709,7 @@ class Input_Handler:
             builder.down(pointer, x, y, 100)
             builder.commit()
             builder.up(pointer)
-            builder.publish(ADB_Manager.minitouch_device.connection)
+            cls._publish(builder)
             time.sleep(delay)
 
     @classmethod
@@ -1684,14 +1740,14 @@ class Input_Handler:
         dt = duration / (inter_points + 1)
         
         builder.down(pointer, x1, y1, pressure=100)
-        builder.publish(ADB_Manager.minitouch_device.connection)
+        cls._publish(builder)
         for x, y in zip(x_points, y_points):
             builder.move(pointer, x, y, pressure=100)
-            builder.publish(ADB_Manager.minitouch_device.connection)
+            cls._publish(builder)
             if dt > 0: time.sleep(dt / 1000)
         if hold_end_time > 0: time.sleep(hold_end_time / 1000)
         builder.up(pointer)
-        builder.publish(ADB_Manager.minitouch_device.connection)
+        cls._publish(builder)
 
     @classmethod
     def swipe_up(cls, y1=1.0, y2=0.0, x=1.0, **kwargs):
@@ -1725,14 +1781,14 @@ class Input_Handler:
         
         builder.down(0, *start[0], pressure=100)
         builder.down(1, *start[1], pressure=100)
-        builder.publish(ADB_Manager.minitouch_device.connection)
+        cls._publish(builder)
         builder.move(0, *end[0], pressure=100)
         builder.move(1, *end[1], pressure=100)
         builder.commit()
-        builder.publish(ADB_Manager.minitouch_device.connection)
+        cls._publish(builder)
         builder.up(0)
         builder.up(1)
-        builder.publish(ADB_Manager.minitouch_device.connection)
+        cls._publish(builder)
 
 class Frame_Handler:
     pool = None

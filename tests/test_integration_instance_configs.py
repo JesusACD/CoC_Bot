@@ -265,6 +265,7 @@ def test_upgrader_run_home_base_does_not_rescan_exhausted_priority_levels():
         patch.object(upgrader.Input_Handler, "zoom"),
         patch.object(upgrader.Input_Handler, "swipe_down"),
         patch.object(upgrader.Input_Handler, "click"),
+        patch.object(upgrader, "in_home_base", return_value=True),
         patch.object(upgrader.Task_Handler, "excluded", side_effect=lambda name, **kw: name != "home_base_priority" and True),
         patch.object(upg, "get_home_builders", return_value=1),
         patch.object(upg, "home_specified_upgrade", side_effect=fake_specified),
