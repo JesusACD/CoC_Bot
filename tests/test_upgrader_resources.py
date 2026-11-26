@@ -408,6 +408,7 @@ def test_adb_connect_once_cleans_up_stale_minitouch_before_starting():
 
     try:
         with (
+            patch("shutil.which", return_value="adb"),
             patch("subprocess.run"),
             patch("adbutils.adb.connect", return_value="connected to 127.0.0.1:5575"),
             patch("adbutils.device", return_value=mock_adbutils_dev),
