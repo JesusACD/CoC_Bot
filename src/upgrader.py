@@ -358,7 +358,8 @@ class Upgrader:
     def _get_upgrade_name(self, categories=["all"]):
         import numpy as np
         x, y = Frame_Handler.locate(self.assets["upgrade_name"], ref="lc", thresh=0.7)
-        assert x is not None and y is not None, "Failed to locate upgrade name"
+        if x is None or y is None:
+            return None
         section = Frame_Handler.get_frame_section(x+0.122, y-0.04, 1-x, y+0.035, high_contrast=True, thresh=255, use_cached=True)
         if configs.DEBUG: Frame_Handler.save_frame(section, "upgrade_name.png")
         upgrade_names = get_vocab_in_categories(categories)
@@ -799,6 +800,7 @@ class Upgrader:
                 "troops",
                 "spells",
             ])
+            if upgrade_name is None: return None
 
             # Click confirm button
             if not self._click_home_confirm(): return None
@@ -885,6 +887,7 @@ class Upgrader:
                 "troops",
                 "spells",
             ])
+            if upgrade_name is None: return None
             
             # Click confirm button
             if not self._click_home_confirm(): return None

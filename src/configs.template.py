@@ -15,6 +15,7 @@ GROQ_API_KEY = ""
 # REQUIRED: Instance Settings
 INSTANCE_IDS = ["main"]
 DEFAULT_INSTANCE_ID = INSTANCE_IDS[0]
+ROTATE_INSTANCES = False # if True, runs one instance at a time sequentially, stopping each emulator after its turn
 
 # REQUIRED: General Settings
 LOCAL_GUI = True # web app not required

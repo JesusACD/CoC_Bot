@@ -435,3 +435,114 @@ header img {
     background-color: var(--notif_background);
     color: rgb(59, 59, 59);
 }
+
+/* Rotación Secuencial & Cuenta Activa */
+.rotate-btn {
+    width: 100%;
+    padding: 12px 14px;
+    background-color: #151520;
+    color: #ffffff;
+    border: 2px solid #ff5500;
+    border-radius: 0.65em;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: bold;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: background-color 0.2s, transform 0.15s, border-color 0.2s;
+}
+
+.rotate-btn:hover {
+    background-color: #ff5500;
+    color: #ffffff;
+    transform: scale(1.02);
+}
+
+.rotate-btn.is-stopping {
+    background-color: #b23b3b;
+    border-color: #b23b3b;
+    color: #ffffff;
+}
+
+.rotate-btn.is-stopping:hover {
+    background-color: #962f2f;
+    border-color: #962f2f;
+}
+
+.rotation-banner {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background-color: #151520;
+    border: 1.5px solid #ff5500;
+    border-radius: 0.65em;
+    color: #ffffff;
+    text-align: left;
+    box-shadow: 0 3px 0.25em var(--shadow);
+}
+
+.rotation-banner-header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #ff5500;
+    margin-bottom: 4px;
+}
+
+.rotation-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #ff5500;
+    display: inline-block;
+    animation: pulse-dot 1.2s infinite ease-in-out;
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.8); }
+}
+
+.rotation-status-text {
+    font-size: 14px;
+    color: #ffffff;
+    line-height: 1.3;
+}
+
+.rotation-status-text strong {
+    color: #ff5500;
+}
+
+.stacked-buttons button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    position: relative;
+}
+
+.stacked-buttons button.is-active-account {
+    background-color: #ff5500 !important;
+    color: #ffffff !important;
+    outline: 3px solid #ffffff;
+    box-shadow: 0 0 12px rgba(255, 85, 0, 0.45);
+}
+
+.active-badge {
+    align-items: center;
+    gap: 4px;
+    font-size: 0.42em;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background-color: #0f0f13;
+    color: #ffffff;
+    border: 1px solid #ffffff;
+}

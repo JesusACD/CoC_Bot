@@ -39,13 +39,44 @@ class Instance:
         self.exclusions = set(k for k, v in task_settings.items() if v)
 
 instances = {}
+rotation_state = {
+    "active": False,
+    "current_id": None,
+    "round": 0,
+    "status": "idle",  # "idle" | "running" | "waiting"
+    "next_round_at": 0,
+}
 
 @app.route("/", methods=["GET"])
 def home():
+    all_ids = sorted(list(set(list(instances.keys()) + INSTANCE_IDS)))
     return render_template(
         "home.html",
-        ids=sorted(list(instances.keys())),
+        ids=all_ids,
+        rotating="rotate" in instances,
+        rotation_state=rotation_state,
     )
+
+@app.route("/rotation_status", methods=["GET", "POST"])
+def handle_rotation_status():
+    global rotation_state
+    if request.method == "POST":
+        data = request.json or {}
+        if "active" in data:
+            rotation_state["active"] = bool(data["active"])
+        if "current_id" in data:
+            rotation_state["current_id"] = data["current_id"]
+        if "round" in data:
+            rotation_state["round"] = data["round"]
+        if "status" in data:
+            rotation_state["status"] = data["status"]
+        if "next_round_at" in data:
+            rotation_state["next_round_at"] = data["next_round_at"]
+    return jsonify({
+        **rotation_state,
+        "rotating": "rotate" in instances or rotation_state["active"],
+        "current_time": time.time(),
+    })
 
 @app.route("/instances/<id>", methods=["GET"])
 def handle_instance(id):
@@ -67,7 +98,7 @@ def handle_instance_start_stop():
     action = data.get("action", "")
     id = data.get("id", "")
     if action == "start":
-        if id not in INSTANCE_IDS:
+        if id != "rotate" and id not in INSTANCE_IDS:
             return jsonify(0)
         if id not in instances:
             instances[id] = Instance(id)
@@ -75,7 +106,12 @@ def handle_instance_start_stop():
         return jsonify(1)
     elif action == "stop":
         instance = instances.pop(id, None)
-        if instance:
+        if id == "rotate":
+            rotation_state["active"] = False
+            rotation_state["current_id"] = None
+            rotation_state["status"] = "idle"
+            rotation_state["next_round_at"] = 0
+        if instance or id == "rotate":
             bot_pipe.send({"action": "stop", "id": id})
         return jsonify(1)
     return jsonify(0)
@@ -110,6 +146,8 @@ def handle_status(id):
 
 @app.route("/instances/<id>/exclude", methods=["GET", "POST"])
 def handle_exclude(id):
+    if id not in instances:
+        instances[id] = Instance(id)
     instance = instances.get(id)
     if not instance: abort(404)
     if request.method == "POST":

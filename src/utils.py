@@ -27,7 +27,7 @@ else:
 INSTANCE_ID = ADB_ADDRESS = None
 TEMP_CACHE = {}
 
-def parse_args(debug=None, id=None, gui=None, gui_port=None):
+def parse_args(debug=None, id=None, gui=None, gui_port=None, rotate=None, once=None):
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -35,13 +35,19 @@ def parse_args(debug=None, id=None, gui=None, gui_port=None):
     parser.add_argument("--id", type=str, default=None, help="Instance ID")
     parser.add_argument("--gui", action="store_true", default=configs.LOCAL_GUI, help="Run with GUI")
     parser.add_argument("--gui-port", type=int, default=None, help="GUI port")
+    parser.add_argument("--rotate", action="store_true", default=getattr(configs, "ROTATE_INSTANCES", False), help="Rotate through INSTANCE_IDS sequentially")
+    parser.add_argument("--once", action="store_true", default=False, help="Run only one cycle then exit")
     args = parser.parse_args()
     configs.DEBUG = args.debug if debug is None else debug
     configs.LOCAL_GUI = args.gui if gui is None else gui
+    if rotate is not None: args.rotate = rotate
+    if once is not None: args.once = once
     TEMP_CACHE["gui_port"] = args.gui_port if gui_port is None else gui_port
     if id is not None:
         assert id in configs.INSTANCE_IDS, f"Invalid instance ID. Must be one of: {configs.INSTANCE_IDS}"
         args.id = id
+    elif getattr(args, "rotate", False) and args.id is None:
+        pass
     elif args.id is None and not configs.LOCAL_GUI:
         args.id = configs.DEFAULT_INSTANCE_ID
     return args
@@ -53,8 +59,13 @@ def init_instance(id):
     assert id in configs.INSTANCE_IDS, f"Invalid instance ID. Must be one of: {configs.INSTANCE_IDS}"
     INSTANCE_ID = id
     request_perms()
+    Emulator_Manager._pid = None
+    Emulator_Manager._adb_port = None
     ADB_ADDRESS = Emulator_Manager.adb_address
     if configs.AUTO_START_EMULATOR: Emulator_Manager.init()
+    Emulator_Manager._adb_port = None
+    ADB_ADDRESS = Emulator_Manager.adb_address
+    logger.info(f"Target ADB address for instance '{id}': {ADB_ADDRESS}")
     if WEB_APP_URL != "":
         if "pythonanywhere.com" in WEB_APP_URL:
             Scheduler.add_job(extend_pythonanywhere_hosting, args=(configs.PA_USERNAME, configs.PA_PASSWORD), trigger="interval", hours=24)
@@ -480,7 +491,7 @@ def in_home_base():
     return Frame_Handler.locate(
         Asset_Manager.upgrader_assets["home_gold"],
         grayscale=False,
-        prefilter=True,
+        prefilter=False,
         thresh=0.7
     ) != (None, None)
 
@@ -543,7 +554,7 @@ def start_coc(timeout=60, detailed=False):
                 TEMP_CACHE["location"] = "builder_base"
                 break
 
-            cont_locs = Frame_Handler.batch_locate(cont_templates, grayscale=False, thresh=0.7, prefilter=True, ref="cc", use_cached=True)
+            cont_locs = Frame_Handler.batch_locate(cont_templates, grayscale=False, thresh=0.7, prefilter=False, ref="cc", use_cached=True)
             for x, y in cont_locs:
                 if x is not None and y is not None:
                     Input_Handler.click(x, y)
@@ -599,7 +610,7 @@ def in_builder_base():
     return Frame_Handler.locate(
         Asset_Manager.upgrader_assets["builder_gold"],
         grayscale=False,
-        prefilter=True,
+        prefilter=False,
         thresh=0.7
     ) != (None, None)
 
@@ -857,11 +868,15 @@ class BlueStacks_Manager(_Emulator_Manager):
 
         if cls._adb_port is None and cls._conf_path is not None:
             if Path(cls._conf_path).exists():
-                conf_data = Path(cls._conf_path).read_text()
+                conf_data = Path(cls._conf_path).read_text(encoding="utf-8", errors="ignore")
+                status_port = None
+                default_port = None
                 for line in conf_data.splitlines():
-                    if line.startswith(f"bst.instance.{cls.internal_instance_name}.adb_port"):
-                        cls._adb_port = line.split("=", 1)[1].strip().replace('"', '')
-                        break
+                    if line.startswith(f"bst.instance.{cls.internal_instance_name}.status.adb_port="):
+                        status_port = line.split("=", 1)[1].strip().replace('"', '')
+                    elif line.startswith(f"bst.instance.{cls.internal_instance_name}.adb_port="):
+                        default_port = line.split("=", 1)[1].strip().replace('"', '')
+                cls._adb_port = status_port if status_port else default_port
 
         if cls._adb_port is None:
             raise RuntimeError(
@@ -947,6 +962,11 @@ class BlueStacks_Manager(_Emulator_Manager):
             if not cls.check():
                 logger.info("BlueStacks stopped.")
                 return
+            if time.time() - start_time > 8 and cls.pid is not None:
+                try:
+                    p = psutil.Process(cls.pid)
+                    if p.is_running(): p.terminate()
+                except: pass
             time.sleep(0.5)
         
         raise Exception("BlueStacks failed to stop.")
@@ -1066,6 +1086,12 @@ class MuMu_Manager(_Emulator_Manager):
             if not cls.check():
                 logger.info("MuMu stopped.")
                 return
+            if time.time() - start_time > 8 and cls.pid is not None:
+                import psutil
+                try:
+                    p = psutil.Process(cls.pid)
+                    if p.is_running(): p.terminate()
+                except: pass
             time.sleep(0.5)
 
         raise Exception("MuMu failed to stop.")
@@ -1127,10 +1153,10 @@ class Task_Handler:
             exclusions = cls.get_exclusions(use_cached=use_cached)
             if exclusions is not None:
                 return task_name in exclusions
-            raise Exception("No external exclusion source available")
+            return not getattr(configs, cls.task_defaults[task_name], False)
         except (KeyboardInterrupt, SystemExit): raise
         except Exception as e:
-            logger.error(f"Task_Handler.excluded: {e}")
+            logger.debug(f"Task_Handler.excluded: {e}")
             return not getattr(configs, cls.task_defaults[task_name], False)
 
 class OCR_Handler:
@@ -1356,8 +1382,7 @@ class ADB_Manager:
         subprocess.run([adb_executable, "start-server"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         res = adbutils.adb.connect(addr)
         if "connected" not in res:
-            subprocess.run([adb_executable, "kill-server"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            raise Exception("Failed to connect to ADB.")
+            raise Exception(f"Failed to connect to ADB ({addr}): {res}")
         devices = []
         try:
             d1 = adbutils.device(addr)
@@ -1366,8 +1391,7 @@ class ADB_Manager:
             devices = [d1, d2, d3]
             Exit_Handler.register(d2.stop)
         except (KeyboardInterrupt, SystemExit): raise
-        except:
-            subprocess.run([adb_executable, "kill-server"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
             raise Exception("Failed to get ADB device.")
         cls._adbutils_device, cls._minitouch_device, cls._uiautomator_device = devices
     

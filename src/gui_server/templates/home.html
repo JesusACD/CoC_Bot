@@ -17,11 +17,108 @@
             <input type="text" name="id" placeholder="ID" required title="Instance ID" autofocus>
             <button type="submit" name="id"><i class="fas fa-arrow-right"></i></button>
         </form>
+        <div style="margin: 12px 0;">
+            <button type="button" id="rotate-btn" class="rotate-btn">
+                <i class="fas fa-sync-alt"></i> Iniciar Rotación Secuencial
+            </button>
+            <div id="rotation-banner" class="rotation-banner" style="display: none;">
+                <div class="rotation-banner-header">
+                    <span class="rotation-dot"></span>
+                    <span id="rotation-round-label">Ronda #1</span>
+                </div>
+                <div id="rotation-status-text" class="rotation-status-text">Iniciando rotación...</div>
+            </div>
+        </div>
         <form class="stacked-buttons"></form>
     </div>
 
     <script>
         const ids = new Set({{ ids|default([])|tojson }});
+        let isRotating = {{ rotating|default(false)|tojson }};
+        let rotationState = {{ rotation_state|default({})|tojson }};
+        const rotateBtn = document.getElementById("rotate-btn");
+        const rotationBanner = document.getElementById("rotation-banner");
+        const rotationRoundLabel = document.getElementById("rotation-round-label");
+        const rotationStatusText = document.getElementById("rotation-status-text");
+
+        function formatRemaining(seconds) {
+            const s = Math.max(0, Math.floor(seconds));
+            const mins = Math.floor(s / 60);
+            const secs = s % 60;
+            return mins > 0 ? `${mins}m ${secs.toString().padStart(2, "0")}s` : `${secs}s`;
+        }
+
+        function updateRotationUI() {
+            if (isRotating) {
+                rotateBtn.innerHTML = '<i class="fas fa-stop"></i> Detener Rotación Secuencial';
+                rotateBtn.classList.add("is-stopping");
+                rotationBanner.style.display = "block";
+
+                const roundNum = rotationState.round || 1;
+                rotationRoundLabel.textContent = `Ronda #${roundNum}`;
+
+                if (rotationState.status === "running" && rotationState.current_id) {
+                    rotationStatusText.innerHTML = `Cuenta activa: <strong>${rotationState.current_id}</strong>`;
+                } else if (rotationState.status === "waiting" && rotationState.next_round_at) {
+                    const serverNow = rotationState.current_time || (Date.now() / 1000);
+                    const remaining = rotationState.next_round_at - serverNow;
+                    rotationStatusText.textContent = `Esperando siguiente ronda (${formatRemaining(remaining)})`;
+                } else {
+                    rotationStatusText.textContent = "Preparando siguiente cuenta...";
+                }
+            } else {
+                rotateBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Iniciar Rotación Secuencial';
+                rotateBtn.classList.remove("is-stopping");
+                rotationBanner.style.display = "none";
+            }
+
+            document.querySelectorAll(".stacked-buttons button").forEach((btn) => {
+                const btnId = btn.value;
+                const badge = btn.querySelector(".active-badge");
+                const isCurrent = isRotating && rotationState.status === "running" && rotationState.current_id === btnId;
+                btn.classList.toggle("is-active-account", isCurrent);
+                if (badge) {
+                    badge.style.display = isCurrent ? "inline-flex" : "none";
+                }
+            });
+        }
+
+        async function pollRotationStatus() {
+            try {
+                const response = await fetch('/rotation_status');
+                if (!response.ok) return;
+                const data = await response.json();
+                isRotating = Boolean(data.rotating);
+                rotationState = data;
+                updateRotationUI();
+            } catch (err) {
+                console.error("Error polling rotation status:", err);
+            }
+        }
+
+        rotateBtn.addEventListener("click", async () => {
+            const action = isRotating ? "stop" : "start";
+            try {
+                const response = await fetch('/instance_action', {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action: action, id: "rotate" })
+                });
+                const res = await response.json();
+                if (res === 1) {
+                    isRotating = !isRotating;
+                    if (!isRotating) {
+                        rotationState = { active: false, current_id: null, status: "idle", next_round_at: 0 };
+                    } else {
+                        rotationState = { ...rotationState, active: true, status: "running" };
+                    }
+                    updateRotationUI();
+                    pollRotationStatus();
+                }
+            } catch (err) {
+                console.error("Error toggling rotation:", err);
+            }
+        });
 
         async function registerID(new_id) {
             try {
@@ -50,16 +147,20 @@
 
         function updateInstances() {
             let i = 0;
-            const ids_list = Array.from(ids);
+            const ids_list = Array.from(ids).filter(x => x !== "rotate");
             while (i < ids_list.length) {
                 const id = ids_list[i];
                 if (!document.getElementById(`id_${id}`)) {
                     const idButton = document.createElement("button");
-                    idButton.type = "submit";
+                    idButton.type = "button";
                     idButton.id = `id_${id}`;
                     idButton.value = id;
-                    idButton.innerHTML = `${id}`;
-                    idButton.onclick = () => {
+                    idButton.innerHTML = `
+                        <span class="btn-account-label">${id}</span>
+                        <span class="active-badge" style="display: none;"><i class="fas fa-bolt"></i> ACTIVA</span>
+                    `;
+                    idButton.onclick = async () => {
+                        await registerID(id);
                         window.location.href = `/instances/${id}`;
                     };
                     document.querySelector(".stacked-buttons").appendChild(idButton);
@@ -70,6 +171,8 @@
         }
 
         updateInstances();
+        updateRotationUI();
+        setInterval(pollRotationStatus, 1000);
 
         document.querySelectorAll("form").forEach(form => {
             form.addEventListener("submit", async (e) => {
