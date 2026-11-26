@@ -1476,11 +1476,11 @@ class Upgrader:
         upgrades_started = []
         if not exclude_base:
             counter = 0
-            while counter < MAX_UPGRADES_PER_CHECK:
+            while counter < configs.MAX_UPGRADES_PER_CHECK:
                 counter += 1
                 try:
                     initial_builders = self.get_home_builders(1)
-                    if initial_builders <= max(0, OPEN_HOME_BUILDERS): break
+                    if initial_builders <= max(0, configs.OPEN_HOME_BUILDERS): break
                     upgraded = self.home_upgrade()
                     time.sleep(0.5)
                     final_builders = self.get_home_builders(1)
@@ -1533,11 +1533,11 @@ class Upgrader:
         upgrades_started = []
         if not exclude_base:
             counter = 0
-            while counter < MAX_UPGRADES_PER_CHECK:
+            while counter < configs.MAX_UPGRADES_PER_CHECK:
                 counter += 1
                 try:
                     initial_builders = self.get_builder_builders(1)
-                    if initial_builders <= max(0, OPEN_BUILDER_BUILDERS): break
+                    if initial_builders <= max(0, configs.OPEN_BUILDER_BUILDERS): break
                     upgraded = self.builder_upgrade()
                     time.sleep(0.5)
                     final_builders = self.get_builder_builders(1)

@@ -238,7 +238,7 @@ class Attacker:
                     Input_Handler.click(0.5, 0.8)
                 elif card_types[i] == "troop":
                     Input_Handler.down(0.5, 0.8, pointer=0)
-                    end_time = time.monotonic() + TROOP_DEPLOY_TIME
+                    end_time = time.monotonic() + configs.TROOP_DEPLOY_TIME
                     while time.monotonic() < end_time and not card_gray(card_centers[i]): time.sleep(0.01)
                     Input_Handler.up(pointer=0)
                 elif card_types[i] == "spell":
@@ -266,7 +266,7 @@ class Attacker:
         total_slots_seen = 0
         last_card_left = 0.0
         
-        while total_slots_seen < ATTACK_SLOT_RANGE[1] - ATTACK_SLOT_RANGE[0] + 1:
+        while total_slots_seen < configs.ATTACK_SLOT_RANGE[1] - configs.ATTACK_SLOT_RANGE[0] + 1:
             frame = Frame_Handler.get_frame_section(0.0, 0.82, 1.0, 1.0, grayscale=False)
             # Find troops to deploy
             card_centers, card_boundaries, card_types, card_counts, type_gaps_seen = self.detect_troop_positions(frame, clip_left=last_card_left, type_gaps_seen=type_gaps_seen, return_boundaries=True, return_types=True, return_counts=True)
@@ -280,8 +280,8 @@ class Attacker:
                     if card_type == "clan": available_slots[i] = 0
             
             # Exclude troops outside of specified slot range
-            available_slots[:max(0, ATTACK_SLOT_RANGE[0] - total_slots_seen)] = 0
-            available_slots[max(0, ATTACK_SLOT_RANGE[1] + 1 - total_slots_seen):] = 0
+            available_slots[:max(0, configs.ATTACK_SLOT_RANGE[0] - total_slots_seen)] = 0
+            available_slots[max(0, configs.ATTACK_SLOT_RANGE[1] + 1 - total_slots_seen):] = 0
             
             # Deploy troops up until the last one visible
             total_slots_seen += len(card_centers) - 1
@@ -339,7 +339,7 @@ class Attacker:
             
             # Complete an attack
             if self.start_normal_attack(timeout):
-                self.complete_normal_attack(restart=restart, exclude_clan_troops=EXCLUDE_CLAN_TROOPS)
+                self.complete_normal_attack(restart=restart, exclude_clan_troops=configs.EXCLUDE_CLAN_TROOPS)
             else:
                 start_coc() # reset in case stuck on find a match screen
         

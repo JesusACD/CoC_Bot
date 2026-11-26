@@ -17,6 +17,21 @@ INSTANCE_IDS = ["main"]
 DEFAULT_INSTANCE_ID = INSTANCE_IDS[0]
 ROTATE_INSTANCES = False # if True, runs one instance at a time sequentially, stopping each emulator after its turn
 
+# OPTIONAL: Per-instance configuration overrides
+# Keys are instance IDs from INSTANCE_IDS; values are dicts mapping any config key below
+# (e.g. HOME_BASE_UPGRADE_PRIORITY, OPEN_HOME_BUILDERS, UPGRADE_PETS, ATTACK_HOME_BASE, etc.)
+# to an override value for that specific account.
+INSTANCE_CONFIGS = {
+    # "alt": {
+    #     "OPEN_HOME_BUILDERS": 1,
+    #     "UPGRADE_PETS": False,
+    #     "HOME_BASE_UPGRADE_PRIORITY": [
+    #         ["Laboratory", "Clan Castle", "Barbarian King"],
+    #         ["Wall"],
+    #     ],
+    # },
+}
+
 # REQUIRED: General Settings
 LOCAL_GUI = True # web app not required
 CHECK_INTERVAL = 5 # minutes

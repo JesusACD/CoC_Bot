@@ -1,7 +1,9 @@
 from utils import *
 try:
+    import configs
     from configs import *
 except:
+    import configs_build as configs
     from configs_build import *
 from upgrader import Upgrader
 from attacker import Attacker
@@ -78,7 +80,7 @@ class CoC_Bot:
                 self.step()
                 if once:
                     break
-                time.sleep(60 * CHECK_INTERVAL)
+                time.sleep(60 * configs.CHECK_INTERVAL)
             except (KeyboardInterrupt, SystemExit): raise
             except Exception:
                 logger.exception("CoC_Bot.run:")
@@ -86,4 +88,4 @@ class CoC_Bot:
                 update_status("error")
                 if once:
                     break
-                time.sleep(60 * CHECK_INTERVAL)
+                time.sleep(60 * configs.CHECK_INTERVAL)

@@ -53,11 +53,17 @@ def parse_args(debug=None, id=None, gui=None, gui_port=None, rotate=None, once=N
     return args
 
 def init_instance(id):
-    global INSTANCE_ID, ADB_ADDRESS
+    global INSTANCE_ID, ADB_ADDRESS, Emulator_Manager
     import requests
+    from config_manager import apply_instance_configs
     
     assert id in configs.INSTANCE_IDS, f"Invalid instance ID. Must be one of: {configs.INSTANCE_IDS}"
     INSTANCE_ID = id
+    apply_instance_configs(id, cfg=configs, logger=logger)
+    emulator_type = getattr(configs, "EMULATOR_TYPE", "bluestacks").lower()
+    if emulator_type not in ("bluestacks", "mumu"):
+        raise ValueError(f"Unsupported EMULATOR_TYPE '{emulator_type}'. Must be 'bluestacks' or 'mumu'.")
+    Emulator_Manager = {"bluestacks": BlueStacks_Manager, "mumu": MuMu_Manager}[emulator_type]
     request_perms()
     Emulator_Manager._pid = None
     Emulator_Manager._adb_port = None
@@ -66,14 +72,14 @@ def init_instance(id):
     Emulator_Manager._adb_port = None
     ADB_ADDRESS = Emulator_Manager.adb_address
     logger.info(f"Target ADB address for instance '{id}': {ADB_ADDRESS}")
-    if WEB_APP_URL != "":
-        if "pythonanywhere.com" in WEB_APP_URL:
+    if configs.WEB_APP_URL != "":
+        if "pythonanywhere.com" in configs.WEB_APP_URL:
             Scheduler.add_job(extend_pythonanywhere_hosting, args=(configs.PA_USERNAME, configs.PA_PASSWORD), trigger="interval", hours=24)
             Scheduler.add_job(get_vocab, trigger="interval", hours=24)
         
         try:
             requests.post(
-                f"{WEB_APP_URL}/instances",
+                f"{configs.WEB_APP_URL}/instances",
                 json={"id": id},
                 timeout=(10, 20)
             )
@@ -1105,7 +1111,7 @@ class Task_Handler:
     task_defaults = {
         "home_base_priority": "PRIORITY_HOME_BASE_UPGRADES",
         "home_lab_priority": "PRIORITY_HOME_LAB_UPGRADES",
-        "pet_house_priority": "PRIORITY_PETS_UPGRADES",
+        "pet_house_priority": "PRIORITY_PET_UPGRADES",
         "builder_base_priority": "PRIORITY_BUILDER_BASE_UPGRADES",
         "builder_lab_priority": "PRIORITY_BUILDER_LAB_UPGRADES",
         "heroes": "UPGRADE_HEROES",
@@ -1126,9 +1132,9 @@ class Task_Handler:
         
         if use_cached and cls.cache_valid:
             return cls.cached_exclusions
-        if WEB_APP_URL != "":
+        if configs.WEB_APP_URL != "":
             res = requests.get(
-                f"{WEB_APP_URL}/instances/{INSTANCE_ID}/exclude",
+                f"{configs.WEB_APP_URL}/instances/{INSTANCE_ID}/exclude",
                 timeout=(10, 20)
             )
             if res.status_code == 200:

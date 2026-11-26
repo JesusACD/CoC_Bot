@@ -13,9 +13,12 @@ import os
 import time
 from flask import Flask, render_template, jsonify, abort, request
 try:
+    import configs
     from configs import *
 except:
+    import configs_build as configs
     from configs_build import *
+from config_manager import get_instance_config
 
 app = Flask(__name__)
 bot_pipe = None
@@ -26,15 +29,21 @@ class Instance:
         self.run_status = ""
         self.end_time = 0
         task_settings = {
-            "heroes": not UPGRADE_HEROES,
-            "home_base": not UPGRADE_HOME_BASE,
-            "builder_base": not UPGRADE_BUILDER_BASE,
-            "home_lab": not UPGRADE_HOME_LAB,
-            "builder_lab": not UPGRADE_BUILDER_LAB,
-            "home_attacks": not ATTACK_HOME_BASE,
-            "builder_attacks": not ATTACK_BUILDER_BASE,
-            "lab_assistant": not ASSIGN_LAB_ASSISTANT,
-            "builder_apprentice": not ASSIGN_BUILDER_APPRENTICE,
+            "home_base_priority": not get_instance_config(self.id, "PRIORITY_HOME_BASE_UPGRADES", True, cfg=configs),
+            "home_lab_priority": not get_instance_config(self.id, "PRIORITY_HOME_LAB_UPGRADES", True, cfg=configs),
+            "pet_house_priority": not get_instance_config(self.id, "PRIORITY_PET_UPGRADES", True, cfg=configs),
+            "builder_base_priority": not get_instance_config(self.id, "PRIORITY_BUILDER_BASE_UPGRADES", True, cfg=configs),
+            "builder_lab_priority": not get_instance_config(self.id, "PRIORITY_BUILDER_LAB_UPGRADES", True, cfg=configs),
+            "heroes": not get_instance_config(self.id, "UPGRADE_HEROES", True, cfg=configs),
+            "home_base": not get_instance_config(self.id, "UPGRADE_HOME_BASE", True, cfg=configs),
+            "builder_base": not get_instance_config(self.id, "UPGRADE_BUILDER_BASE", True, cfg=configs),
+            "home_lab": not get_instance_config(self.id, "UPGRADE_HOME_LAB", True, cfg=configs),
+            "builder_lab": not get_instance_config(self.id, "UPGRADE_BUILDER_LAB", True, cfg=configs),
+            "pet_house": not get_instance_config(self.id, "UPGRADE_PETS", True, cfg=configs),
+            "home_attacks": not get_instance_config(self.id, "ATTACK_HOME_BASE", True, cfg=configs),
+            "builder_attacks": not get_instance_config(self.id, "ATTACK_BUILDER_BASE", True, cfg=configs),
+            "lab_assistant": not get_instance_config(self.id, "ASSIGN_LAB_ASSISTANT", True, cfg=configs),
+            "builder_apprentice": not get_instance_config(self.id, "ASSIGN_BUILDER_APPRENTICE", True, cfg=configs),
         }
         self.exclusions = set(k for k, v in task_settings.items() if v)
 
@@ -49,7 +58,8 @@ rotation_state = {
 
 @app.route("/", methods=["GET"])
 def home():
-    all_ids = sorted(list(set(list(instances.keys()) + INSTANCE_IDS)))
+    active_ids = [inst_id for inst_id in instances.keys() if inst_id != "rotate"]
+    all_ids = sorted(list(set(active_ids + list(configs.INSTANCE_IDS))))
     return render_template(
         "home.html",
         ids=all_ids,
