@@ -239,3 +239,94 @@ def test_launch_proc_enables_logging_before_init_instance():
         launch.launch_proc(fake_args)
 
     assert call_order == [("enable_logging", "main"), ("init_instance", "main")]
+
+
+def test_upgrader_run_home_base_does_not_rescan_exhausted_priority_levels():
+    import upgrader
+
+    configs.MAX_UPGRADES_PER_CHECK = 3
+    configs.OPEN_HOME_BUILDERS = 0
+    configs.HOME_BASE_UPGRADE_PRIORITY = [
+        ["Laboratory"],
+        ["Army Camp"],
+        ["Wall"],
+    ]
+
+    upg = upgrader.Upgrader()
+    checked_levels = []
+
+    def fake_specified(level):
+        checked_levels.append(list(level))
+        if level == ["Wall"]:
+            return "Wall"
+        return None
+
+    with (
+        patch.object(upgrader.Input_Handler, "zoom"),
+        patch.object(upgrader.Input_Handler, "swipe_down"),
+        patch.object(upgrader.Input_Handler, "click"),
+        patch.object(upgrader.Task_Handler, "excluded", side_effect=lambda name, **kw: name != "home_base_priority" and True),
+        patch.object(upg, "get_home_builders", return_value=1),
+        patch.object(upg, "home_specified_upgrade", side_effect=fake_specified),
+        patch.object(upg, "home_random_upgrade", return_value=None),
+        patch.object(upgrader, "send_notification") as mock_notify,
+        patch("time.sleep"),
+    ):
+        upg.run_home_base(exclude_base=False, exclude_lab=True, exclude_pet=True)
+
+    # Priority 1 & 2 checked ONCE on attempt 1; attempts 2 and 3 jump straight to Priority 3 (["Wall"])
+    assert checked_levels == [
+        ["Laboratory"],
+        ["Army Camp"],
+        ["Wall"],
+        ["Wall"],
+        ["Wall"],
+    ]
+    assert mock_notify.call_count == 3
+
+
+def test_cmd_rotate_terminates_stalled_instance_and_stops_at_max_rounds():
+    import types
+    import launch
+
+    configs.INSTANCE_IDS = ["main", "cuenta1"]
+    configs.MAX_ROTATION_TURN_MINUTES = 0.01  # 0.6s timeout
+    configs.CHECK_INTERVAL = 1
+
+    started_ids = []
+    terminated_ids = []
+
+    class FakeProcess:
+        def __init__(self, target=None, args=()):
+            self.inst_id = args[0].id
+            self._alive = False
+
+        def start(self):
+            started_ids.append(self.inst_id)
+            self._alive = True
+
+        def join(self, timeout=None):
+            # Simulate "main" hanging past timeout, while "cuenta1" finishes cleanly
+            if self.inst_id != "main":
+                self._alive = False
+
+        def is_alive(self):
+            return self._alive
+
+        def terminate(self):
+            terminated_ids.append(self.inst_id)
+            self._alive = False
+
+    fake_args = types.SimpleNamespace(
+        debug=False, id=None, gui=False, gui_port=None, rotate=True, once=False, rounds=1
+    )
+
+    with (
+        patch("multiprocessing.Process", side_effect=FakeProcess),
+        patch.object(utils, "disable_sleep"),
+        patch("time.sleep"),
+    ):
+        launch.cmd_rotate(fake_args)
+
+    assert started_ids == ["main", "cuenta1"]
+    assert terminated_ids == ["main"]

@@ -683,12 +683,19 @@ class Upgrader:
             return None
     
     @require_exit(x=0.99, y=0.01)
-    def home_upgrade(self):
+    def home_upgrade(self, start_priority_idx=0, return_priority_idx=False):
         if not Task_Handler.excluded("home_base_priority"):
-            for priority_level in configs.HOME_BASE_UPGRADE_PRIORITY:
+            priorities = configs.HOME_BASE_UPGRADE_PRIORITY
+            for idx in range(start_priority_idx, len(priorities)):
+                priority_level = priorities[idx]
+                logger.debug(f"Checking home upgrade priority level {idx + 1}/{len(priorities)}: {priority_level}")
                 upgrade_name = self.home_specified_upgrade(priority_level)
-                if upgrade_name is not None: return upgrade_name
-        return self.home_random_upgrade()
+                if upgrade_name is not None:
+                    return (upgrade_name, idx) if return_priority_idx else upgrade_name
+            upgrade_name = self.home_random_upgrade()
+            return (upgrade_name, len(priorities)) if return_priority_idx else upgrade_name
+        upgrade_name = self.home_random_upgrade()
+        return (upgrade_name, start_priority_idx) if return_priority_idx else upgrade_name
     
     @require_exit(x=0.99, y=0.01)
     def assign_builder_apprentice(self):
@@ -1476,19 +1483,27 @@ class Upgrader:
         upgrades_started = []
         if not exclude_base:
             counter = 0
+            priority_idx = 0
             while counter < configs.MAX_UPGRADES_PER_CHECK:
                 counter += 1
                 try:
                     initial_builders = self.get_home_builders(1)
-                    if initial_builders <= max(0, configs.OPEN_HOME_BUILDERS): break
-                    upgraded = self.home_upgrade()
+                    if initial_builders <= max(0, configs.OPEN_HOME_BUILDERS):
+                        logger.info(f"Home builders available ({initial_builders}) <= OPEN_HOME_BUILDERS ({configs.OPEN_HOME_BUILDERS}). Stopping upgrades.")
+                        break
+                    upgraded, priority_idx = self.home_upgrade(start_priority_idx=priority_idx, return_priority_idx=True)
                     time.sleep(0.5)
                     final_builders = self.get_home_builders(1)
                     if upgraded is not None:
                         upgraded = upgraded.lower()
-                        if final_builders < initial_builders: upgrades_started.append(upgraded)
-                        elif final_builders == initial_builders and upgraded != "wall": break
-                    else: break
+                        logger.info(f"Home upgrade attempt #{counter}: '{upgraded}' (builders: {initial_builders} -> {final_builders})")
+                        if final_builders < initial_builders or upgraded == "wall":
+                            upgrades_started.append(upgraded)
+                        elif final_builders == initial_builders:
+                            break
+                    else:
+                        logger.info("No affordable home base upgrades found.")
+                        break
                 except (KeyboardInterrupt, SystemExit): raise
                 except:
                     logger.warning("Encountered an error while attempting to upgrade home base. Retrying...")
@@ -1499,9 +1514,11 @@ class Upgrader:
         lab_upgrades_started = []
         try:
             if not exclude_lab and self.home_lab_available(1):
+                logger.info("Home lab available. Searching for lab upgrade...")
                 upgraded = self.home_lab_upgrade()
                 time.sleep(0.5)
                 final_lab_avail = self.home_lab_available(1)
+                logger.info(f"Home lab upgrade result: '{upgraded}' (still available: {final_lab_avail})")
                 if upgraded is not None and not final_lab_avail: lab_upgrades_started.append(upgraded.lower())
         except (KeyboardInterrupt, SystemExit): raise
         except:
@@ -1513,12 +1530,15 @@ class Upgrader:
         pet_upgrades_started = []
         try:
             if not exclude_pet and self.pet_house_available(1):
+                logger.info("Pet house available. Searching for pet upgrade...")
                 upgraded = self.pet_house_upgrade()
                 time.sleep(0.5)
                 final_pet_avail = self.pet_house_available(1)
+                logger.info(f"Pet house upgrade result: '{upgraded}' (still available: {final_pet_avail})")
                 if upgraded is not None and not final_pet_avail: pet_upgrades_started.append(upgraded.lower())
         except (KeyboardInterrupt, SystemExit): raise
-        except: pass
+        except Exception as e:
+            logger.warning(f"Encountered an error while attempting to upgrade pet house: {e}")
 
         for upgrade in upgrades_started + lab_upgrades_started + pet_upgrades_started:
             send_notification(f"Started upgrading {upgrade}")

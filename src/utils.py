@@ -27,7 +27,7 @@ else:
 INSTANCE_ID = ADB_ADDRESS = None
 TEMP_CACHE = {}
 
-def parse_args(debug=None, id=None, gui=None, gui_port=None, rotate=None, once=None):
+def parse_args(debug=None, id=None, gui=None, gui_port=None, rotate=None, once=None, rounds=None):
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -37,11 +37,15 @@ def parse_args(debug=None, id=None, gui=None, gui_port=None, rotate=None, once=N
     parser.add_argument("--gui-port", type=int, default=None, help="GUI port")
     parser.add_argument("--rotate", action="store_true", default=getattr(configs, "ROTATE_INSTANCES", False), help="Rotate through INSTANCE_IDS sequentially")
     parser.add_argument("--once", action="store_true", default=False, help="Run only one cycle then exit")
+    parser.add_argument("--rounds", type=int, default=None, help="Maximum number of rotation rounds before exiting (default: unlimited)")
     args = parser.parse_args()
     configs.DEBUG = args.debug if debug is None else debug
     configs.LOCAL_GUI = args.gui if gui is None else gui
+    args.debug = configs.DEBUG
+    args.gui = configs.LOCAL_GUI
     if rotate is not None: args.rotate = rotate
     if once is not None: args.once = once
+    if rounds is not None: args.rounds = rounds
     TEMP_CACHE["gui_port"] = args.gui_port if gui_port is None else gui_port
     if id is not None:
         assert id in configs.INSTANCE_IDS, f"Invalid instance ID. Must be one of: {configs.INSTANCE_IDS}"

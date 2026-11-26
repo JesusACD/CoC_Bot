@@ -96,8 +96,17 @@ def cmd_rotate(args):
                 
                 current_child = Process(target=launch_proc, args=(args_copy,))
                 current_child.start()
+                turn_limit_min = getattr(configs, "MAX_ROTATION_TURN_MINUTES", 10)
+                turn_timeout = (60 * turn_limit_min) if turn_limit_min and turn_limit_min > 0 else None
                 try:
-                    current_child.join()
+                    current_child.join(timeout=turn_timeout)
+                    if current_child.is_alive():
+                        logger.error(
+                            f"[{instance_id}] Turn exceeded safety timeout ({turn_limit_min} min). "
+                            "Terminating stalled instance and moving to next account..."
+                        )
+                        current_child.terminate()
+                        current_child.join(timeout=10)
                 except (KeyboardInterrupt, SystemExit):
                     if current_child and current_child.is_alive():
                         current_child.terminate()
@@ -110,6 +119,17 @@ def cmd_rotate(args):
                 time.sleep(5)
             
             logger.info(f"Round #{round_num} complete for all instances.")
+            max_rounds = getattr(args, "rounds", None)
+            if max_rounds is not None and round_num >= max_rounds:
+                report_rotation({
+                    "active": False,
+                    "current_id": None,
+                    "round": round_num,
+                    "status": "idle",
+                    "next_round_at": 0,
+                })
+                logger.info(f"Reached target rotation rounds ({max_rounds}). Exiting rotation.")
+                break
             logger.info(f"All emulators stopped. Waiting {configs.CHECK_INTERVAL} minutes before next round...")
             wait_seconds = int(60 * configs.CHECK_INTERVAL)
             report_rotation({

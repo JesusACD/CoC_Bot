@@ -16,6 +16,7 @@ GROQ_API_KEY = ""
 INSTANCE_IDS = ["main"]
 DEFAULT_INSTANCE_ID = INSTANCE_IDS[0]
 ROTATE_INSTANCES = False # if True, runs one instance at a time sequentially, stopping each emulator after its turn
+MAX_ROTATION_TURN_MINUTES = 10 # safety timeout per account turn in rotation mode (None or 0 to disable)
 
 # OPTIONAL: Per-instance configuration overrides
 # Keys are instance IDs from INSTANCE_IDS; values are dicts mapping any config key below
