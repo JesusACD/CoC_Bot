@@ -203,7 +203,9 @@ def test_home_random_upgrade_logs_warning_when_blocked_by_unplaced_new_buildings
     upg = upgrader.Upgrader()
     fake_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
     orig_start = configs.START_FROM_MENU_TOP
+    orig_place_new = getattr(configs, "PLACE_NEW_BUILDINGS", True)
     configs.START_FROM_MENU_TOP = True
+    configs.PLACE_NEW_BUILDINGS = False
 
     def fake_potential_locs(menu, exclude_new=False):
         if exclude_new:
@@ -235,3 +237,215 @@ def test_home_random_upgrade_logs_warning_when_blocked_by_unplaced_new_buildings
         assert any("Only unplaced 'New' shop buildings remain" in str(c.args[0]) for c in mock_warn.call_args_list)
     finally:
         configs.START_FROM_MENU_TOP = orig_start
+        configs.PLACE_NEW_BUILDINGS = orig_place_new
+
+
+def test_place_new_building_clicks_confirm_directly_and_retries_drag_on_red_spot():
+    upg = upgrader.Upgrader()
+    fake_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    # Case 1: Green checkmark visible immediately -> clicks it without dragging
+    with (
+        patch.object(upgrader.Frame_Handler, "get_frame", return_value=fake_frame),
+        patch.object(upg, "_locate_placement_button", return_value=(0.57, 0.50)),
+        patch.object(upgrader.Input_Handler, "click") as mock_click,
+        patch.object(upgrader.Input_Handler, "swipe") as mock_swipe,
+        patch("time.sleep"),
+    ):
+        assert upg._place_new_building(timeout=0.3) is True
+
+    mock_click.assert_called_once_with(0.57, 0.50)
+    mock_swipe.assert_not_called()
+
+    # Case 2: Initial drop blocked (no green check initially, red cancel visible -> drags -> green check appears)
+    locate_seq = iter([
+        (None, None),  # poll iter 1
+        (None, None),  # poll iter 2
+        (0.54, 0.50),  # place_cancel found after timeout
+        (0.35, 0.42),  # place_confirm appears after first drag!
+    ])
+    with (
+        patch.object(upgrader.Frame_Handler, "get_frame", return_value=fake_frame),
+        patch.object(upg, "_locate_placement_button", side_effect=lambda *a, **kw: next(locate_seq)),
+        patch.object(upgrader.Input_Handler, "click") as mock_click2,
+        patch.object(upgrader.Input_Handler, "swipe") as mock_swipe2,
+        patch("time.sleep"),
+    ):
+        assert upg._place_new_building(timeout=0.5) is True
+
+    mock_swipe2.assert_called_once()
+    mock_click2.assert_called_once_with(0.35, 0.42)
+
+
+def test_row_uses_gems_and_is_new_row_on_real_capture_layout():
+    upg = upgrader.Upgrader()
+    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    h, w = frame.shape[:2]
+
+    # Row 1 at y=0.25: New gold building (neon green text + gold coin)
+    frame[int(h * 0.24):int(h * 0.26), int(w * 0.79):int(w * 0.90)] = [180, 247, 86]
+    # Row 2 at y=0.35: New gem building like Builder's Hut (neon green text + bright emerald gem on right edge)
+    frame[int(h * 0.34):int(h * 0.36), int(w * 0.79):int(w * 0.90)] = [180, 247, 86]
+    frame[int(h * 0.34):int(h * 0.36), w - 35:w - 15] = [100, 230, 80]
+
+    assert upg._is_new_row(frame, 0.25, 0.775, 1.0) is True
+    assert upg._row_uses_gems(frame, 0.25, 0.775, 1.0) is False
+    assert upg._is_new_row(frame, 0.35, 0.775, 1.0) is True
+    assert upg._row_uses_gems(frame, 0.35, 0.775, 1.0) is True
+
+
+def test_home_specified_upgrade_places_new_building_and_never_buys_builders_hut():
+    upg = upgrader.Upgrader()
+    orig_start = configs.START_FROM_MENU_TOP
+    orig_place_new = getattr(configs, "PLACE_NEW_BUILDINGS", True)
+    configs.START_FROM_MENU_TOP = True
+    configs.PLACE_NEW_BUILDINGS = True
+
+    try:
+        # Must refuse Builder's Hut immediately before even opening menus
+        with (
+            patch.object(upg, "_open_home_builders_menu") as mock_open,
+            patch.object(upgrader.Input_Handler, "click_exit"),
+            patch.object(upgrader.Task_Handler, "excluded", return_value=False),
+            patch.object(upgrader, "get_vocab", return_value={"heroes": ["Barbarian King"]}),
+        ):
+            assert upg.home_specified_upgrade(["Builder's Hut"]) is None
+        mock_open.assert_not_called()
+
+        # When priority includes Hero Hall marked 'New', clicks row and calls _place_new_building
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        frame[int(1080 * 0.12):int(1080 * 0.14), int(1920 * 0.79):int(1920 * 0.90)] = [180, 247, 86]
+
+        def fake_batch_locate(templates, frame, **kwargs):
+            return [[(0.78, 0.13)] for _ in templates]
+
+        with (
+            patch.object(upg, "_open_home_builders_menu", return_value=(0.85, 0.08)),
+            patch.object(upgrader.Frame_Handler, "get_frame", return_value=frame),
+            patch.object(upgrader.Frame_Handler, "locate", return_value=(0.85, 0.08)),
+            patch.object(upgrader.Frame_Handler, "batch_locate", side_effect=fake_batch_locate),
+            patch.object(upgrader, "get_vocab", return_value={"heroes": ["Barbarian King"]}),
+            patch.object(upgrader.Task_Handler, "excluded", return_value=False),
+            patch.object(upg, "_place_new_building", return_value=True) as mock_place,
+            patch.object(upg, "_click_home_confirm") as mock_confirm,
+            patch.object(upgrader.Input_Handler, "click") as mock_click,
+            patch.object(upgrader.Input_Handler, "click_exit"),
+            patch("time.sleep"),
+        ):
+            result = upg.home_specified_upgrade(["Hero Hall"])
+
+        assert result == "hero hall"
+        mock_place.assert_called_once()
+        mock_confirm.assert_not_called()
+        menu_center = (0.775 + 1.0) / 2
+        assert mock_click.call_args_list[0].args == (menu_center, 0.13)
+    finally:
+        configs.START_FROM_MENU_TOP = orig_start
+        configs.PLACE_NEW_BUILDINGS = orig_place_new
+
+
+def test_home_random_upgrade_places_affordable_non_gem_new_building_before_town_hall():
+    upg = upgrader.Upgrader()
+    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    # Paint bright green text at y_px=150 in menu (y_norm = 150/1080 + 0.06 ≈ 0.199)
+    y_abs = int(1080 * 0.06 + 150)
+    frame[y_abs - 10:y_abs + 10, int(1920 * 0.79):int(1920 * 0.90)] = [180, 247, 86]
+
+    orig_start = configs.START_FROM_MENU_TOP
+    orig_place_new = getattr(configs, "PLACE_NEW_BUILDINGS", True)
+    configs.START_FROM_MENU_TOP = True
+    configs.PLACE_NEW_BUILDINGS = True
+
+    def fake_potential_locs(menu, exclude_new=False):
+        if exclude_new:
+            return np.array([300.0])  # only Town Hall
+        return np.array([150.0, 300.0])  # Elixir Collector (New) + Town Hall
+
+    def fake_batch_locate(templates, frame, **kwargs):
+        # Town Hall at y_menu=300, no heroes/crafting/builders hut matched
+        res = [[(40, 300)]]
+        res.extend([[(-1, -1)] for _ in range(len(templates) - 1)])
+        return res
+
+    try:
+        with (
+            patch.object(upg, "_open_home_builders_menu", return_value=(0.85, 0.09)),
+            patch.object(upgrader.Frame_Handler, "get_frame", return_value=frame),
+            patch.object(upgrader.Input_Handler, "click") as mock_click,
+            patch.object(upgrader.Input_Handler, "click_exit"),
+            patch.object(upgrader, "get_vocab", return_value={"heroes": ["Barbarian King"]}),
+            patch.object(upgrader.Task_Handler, "excluded", return_value=True),
+            patch.object(upg, "_get_potential_upgrade_locs", side_effect=fake_potential_locs),
+            patch.object(upgrader.Frame_Handler, "batch_locate", side_effect=fake_batch_locate),
+            patch.object(upg, "_identify_home_row_name", return_value="elixir collector"),
+            patch.object(upg, "_place_new_building", return_value=True) as mock_place,
+            patch.object(upg, "_click_home_confirm") as mock_confirm,
+            patch("time.sleep"),
+        ):
+            result = upg.home_random_upgrade()
+
+        assert result == "elixir collector"
+        mock_place.assert_called_once()
+        mock_confirm.assert_not_called()
+        menu_center = (0.775 + 1.0) / 2
+        assert abs(mock_click.call_args_list[0].args[0] - menu_center) < 1e-6
+        assert abs(mock_click.call_args_list[0].args[1] - (150.0 / 1080 + 0.06)) < 1e-6
+    finally:
+        configs.START_FROM_MENU_TOP = orig_start
+        configs.PLACE_NEW_BUILDINGS = orig_place_new
+
+
+def test_adb_connect_once_cleans_up_stale_minitouch_before_starting():
+    mock_old_mnt = MagicMock()
+    mock_adbutils_dev = MagicMock()
+    mock_new_mnt = MagicMock()
+    mock_u2_dev = MagicMock()
+
+    orig_mnt = utils.ADB_Manager._minitouch_device
+    orig_adb = utils.ADB_Manager._adbutils_device
+    orig_u2 = utils.ADB_Manager._uiautomator_device
+    utils.ADB_Manager._minitouch_device = mock_old_mnt
+
+    try:
+        with (
+            patch("subprocess.run"),
+            patch("adbutils.adb.connect", return_value="connected to 127.0.0.1:5575"),
+            patch("adbutils.device", return_value=mock_adbutils_dev),
+            patch("pyminitouch.MNTDevice", return_value=mock_new_mnt) as mock_mnt_cls,
+            patch("uiautomator2.connect", return_value=mock_u2_dev),
+            patch.object(utils.Exit_Handler, "register"),
+            patch("time.sleep"),
+        ):
+            utils.ADB_Manager.connect_once("127.0.0.1:5575")
+
+        mock_old_mnt.stop.assert_called_once()
+        mock_adbutils_dev.shell.assert_called_once_with("pkill -f minitouch")
+        mock_mnt_cls.assert_called_once_with("127.0.0.1:5575")
+        assert utils.ADB_Manager._minitouch_device is mock_new_mnt
+    finally:
+        utils.ADB_Manager._minitouch_device = orig_mnt
+        utils.ADB_Manager._adbutils_device = orig_adb
+        utils.ADB_Manager._uiautomator_device = orig_u2
+
+
+def test_locate_placement_button_matches_zoomed_in_scale():
+    import cv2
+
+    upg = upgrader.Upgrader()
+    tmpl = upg.assets["place_confirm"]
+    scaled = cv2.resize(tmpl, (0, 0), fx=2.9, fy=2.9, interpolation=cv2.INTER_LINEAR)
+    sh, sw = scaled.shape[:2]
+
+    frame = np.full((1080, 1920, 3), [120, 170, 60], dtype=np.uint8)
+    y0, x0 = 350, 600
+    frame[y0:y0 + sh, x0:x0 + sw] = scaled
+
+    x, y = upg._locate_placement_button("place_confirm", frame)
+    assert x is not None and y is not None
+    expected_x = (x0 + sw / 2) / 1920
+    expected_y = (y0 + sh / 2) / 1080
+    assert abs(x - expected_x) < 0.02
+    assert abs(y - expected_y) < 0.02
+
+    empty_frame = np.full((1080, 1920, 3), [120, 170, 60], dtype=np.uint8)
+    assert upg._locate_placement_button("place_confirm", empty_frame) == (None, None)

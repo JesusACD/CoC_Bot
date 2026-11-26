@@ -311,7 +311,7 @@ def get_vocab():
     return data
 
 def get_vocab_in_categories(categories):
-    vocab = Cache_Manager.get("vocab", get_vocab())
+    vocab = Cache_Manager.get("vocab") or get_vocab()
     if isinstance(categories, str):
         categories = [categories]
     out = []
@@ -1589,9 +1589,21 @@ class ADB_Manager:
         res = adbutils.adb.connect(addr)
         if "connected" not in res:
             raise Exception(f"Failed to connect to ADB ({addr}): {res}")
+        if cls._minitouch_device is not None:
+            try:
+                cls._minitouch_device.stop()
+            except Exception:
+                pass
+            cls._minitouch_device = None
         devices = []
         try:
+            import time
             d1 = adbutils.device(addr)
+            try:
+                d1.shell("pkill -f minitouch")
+                time.sleep(0.2)
+            except Exception:
+                pass
             d2 = MNTDevice(addr)
             d3 = u2.connect(addr)
             devices = [d1, d2, d3]

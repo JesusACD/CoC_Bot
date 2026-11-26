@@ -46,6 +46,8 @@ OPEN_HOME_BUILDERS = 0 # number of home base builders to keep open (not upgradin
 
 UPGRADE_HEROES = True # can be overridden on desktop or web app
 UPGRADE_HOME_BASE = True # can be overridden on desktop or web app
+PLACE_NEW_BUILDINGS = True # automatically buy and place unlocked "New" shop buildings (never spends gems)
+PLACE_NEW_BUILDINGS = True # purchase and place unplaced 'New' Home Village buildings (excluding gem items like Builder's Hut)
 UPGRADE_HOME_LAB = True # can be overridden on desktop or web app
 UPGRADE_PETS = True # can be overridden on desktop or web app
 ASSIGN_LAB_ASSISTANT = True # can be overridden on desktop or web app

@@ -10,7 +10,7 @@
 ## Automated Features (Both Villages)
 * Resource collection 💰
 * Hero upgrades 👑
-* Building upgrades 🧱
+* Building upgrades & automatic new building placement 🧱
 * Laboratory upgrades 🔬
 * Pet upgrades 🐶
 * Assistant assignment ⏩️

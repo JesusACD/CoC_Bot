@@ -7,6 +7,8 @@ except:
     from configs_build import *
 
 class Upgrader:
+    NEVER_BUY_NEW = frozenset({"builder's hut"})
+
     def __init__(self):
         self.assets = Asset_Manager.upgrader_assets
         self.misc_assets = Asset_Manager.misc_assets
@@ -122,6 +124,105 @@ class Upgrader:
             lambda: self._find_builder_confirm(),
             timeout=timeout
         )
+
+    def _locate_placement_button(self, asset_key, frame=None, thresh=0.75, return_scale=False):
+        """Locate the floating green confirm or red cancel button across camera zoom levels."""
+        import cv2
+        tmpl = self.assets.get(asset_key)
+        if tmpl is None:
+            return (None, None, 1.0) if return_scale else (None, None)
+        scales = (0.8, 1.0, 1.25, 1.5, 1.8, 2.1, 2.4, 2.7, 3.0, 3.3)
+        scale_templates = [
+            cv2.resize(tmpl, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+            for scale in scales
+        ]
+        if frame is None:
+            frame = Frame_Handler.get_frame(grayscale=False)
+        results = Frame_Handler.batch_locate(
+            scale_templates,
+            frame,
+            thresh=thresh,
+            grayscale=False,
+            prefilter=False,
+            return_confidence=True,
+        )
+        best = max(
+            ((x, y, c, s) for (x, y, c), s in zip(results, scales) if x is not None and y is not None),
+            key=lambda item: item[2],
+            default=None,
+        )
+        if best is None or best[2] < thresh:
+            return (None, None, 1.0) if return_scale else (None, None)
+        if return_scale:
+            return best[0], best[1], best[3]
+        return best[0], best[1]
+
+    def _place_new_building(self, timeout=5):
+        """Confirm placement of a newly dropped building, nudging to open grass if initially blocked."""
+        import time
+
+        wait_limit = min(timeout, 2.0)
+        max_polls = max(1, int(wait_limit / 0.25))
+        start = time.time()
+        frame = None
+        for poll_idx in range(max_polls):
+            frame = Frame_Handler.get_frame(grayscale=False)
+            x_ok, y_ok = self._locate_placement_button("place_confirm", frame)
+            if x_ok is not None and y_ok is not None:
+                time.sleep(0.15)
+                Input_Handler.click(x_ok, y_ok)
+                time.sleep(0.5)
+                logger.info("Confirmed new building placement on map.")
+                return True
+            if poll_idx + 1 >= max_polls or time.time() - start >= wait_limit:
+                break
+            time.sleep(0.25)
+
+        res_no = self._locate_placement_button("place_cancel", frame, return_scale=True)
+        if len(res_no) == 3:
+            x_no, y_no, scale_no = res_no
+        else:
+            x_no, y_no, scale_no = res_no[0], res_no[1], 1.0
+        if x_no is None or y_no is None:
+            if configs.DEBUG:
+                Frame_Handler.screenshot("place_new_building_failed.png")
+            return False
+
+        # Initial drop may overlap existing structures (red footprint); drag toward open grass spots
+        for target_x, target_y in ((0.32, 0.42), (0.65, 0.35), (0.35, 0.62), (0.62, 0.62)):
+            drag_x = min(0.90, x_no + 0.02 * scale_no)
+            drag_y = min(0.85, y_no + 0.055 * scale_no)
+            Input_Handler.swipe(
+                x1=drag_x,
+                y1=drag_y,
+                x2=target_x,
+                y2=target_y,
+                duration=250,
+                hold_end_time=100,
+                inter_points=10,
+            )
+            time.sleep(0.3)
+            frame = Frame_Handler.get_frame(grayscale=False)
+            x_ok, y_ok = self._locate_placement_button("place_confirm", frame)
+            if x_ok is not None and y_ok is not None:
+                time.sleep(0.15)
+                Input_Handler.click(x_ok, y_ok)
+                time.sleep(0.5)
+                logger.info("Confirmed new building placement after repositioning.")
+                return True
+            res_no = self._locate_placement_button("place_cancel", frame, return_scale=True)
+            if len(res_no) == 3:
+                x_no, y_no, scale_no = res_no
+            else:
+                x_no, y_no, scale_no = res_no[0], res_no[1], 1.0
+            if x_no is None or y_no is None:
+                return False
+
+        if configs.DEBUG:
+            Frame_Handler.save_frame(frame, "place_new_building_failed.png")
+        Input_Handler.click(x_no, y_no)
+        time.sleep(0.3)
+        return False
 
     def _scroll_to_menu_bottom(self, menu_left, menu_right, menu_top, menu_bottom, max_scrolls=10):
         import numpy as np
@@ -418,6 +519,63 @@ class Upgrader:
     def _get_sufficient_resources(self, section):
         return not check_color((255, 123, 114), section, tol=45)
 
+    def _row_section(self, frame, y, menu_left, menu_right, pad_top=0.025, pad_bottom=0.035):
+        return Frame_Handler.crop(
+            frame,
+            menu_left,
+            max(0.0, y - pad_top),
+            menu_right,
+            min(1.0, y + pad_bottom),
+        )
+
+    def _is_new_row(self, frame, y, menu_left, menu_right):
+        """Return True if the menu row at normalized y displays bright green 'New' building text."""
+        section = self._row_section(frame, y, menu_left, menu_right)
+        if section.size == 0:
+            return False
+        return bool(check_color((180, 247, 86), section, tol=25))
+
+    def _row_uses_gems(self, frame, y, menu_left, menu_right):
+        """Return True if the right cost icon of the row is an emerald-green gem icon."""
+        icon_left = max(menu_left, menu_right - 0.03)
+        section = Frame_Handler.crop(
+            frame,
+            icon_left,
+            max(0.0, y - 0.025),
+            menu_right,
+            min(1.0, y + 0.035),
+        )
+        if section.size == 0:
+            return False
+        r = section[:, :, 0].astype(int)
+        g = section[:, :, 1].astype(int)
+        b = section[:, :, 2].astype(int)
+        return bool(((g - r > 40) & (g - b > 100) & (g > 140)).any())
+
+    def _identify_home_row_name(self, frame, y, menu_left, menu_right):
+        """Identify the Home Village building/trap name in the menu row at normalized y."""
+        import numpy as np
+        section = self._row_section(frame, y, menu_left, menu_right, pad_top=0.028, pad_bottom=0.030)
+        if section.size == 0:
+            return "new building"
+        vocab = get_vocab_in_categories(["buildings/home-village", "traps/home-village", "heroes"])
+        if not vocab:
+            return "new building"
+        templates = [render_text(name, "SupercellMagic", 17) for name in vocab]
+        results = Frame_Handler.batch_locate(
+            templates,
+            section,
+            thresh=0.0,
+            grayscale=True,
+            prefilter=False,
+            return_confidence=True,
+        )
+        confs = [c for _, _, c in results]
+        best_idx = int(np.argmax(confs))
+        if confs[best_idx] < 0.60:
+            return "new building"
+        return vocab[best_idx].lower()
+
     def _get_upgrade_name(self, categories=["all"]):
         import numpy as np
         x, y = Frame_Handler.locate(self.assets["upgrade_name"], ref="lc", thresh=0.7)
@@ -440,9 +598,25 @@ class Upgrader:
         if return_bounds: return menu, menu_left, menu_top, menu_right, menu_bottom
         return menu
 
+    @staticmethod
+    def _gaussian_1d(arr, sigma):
+        import cv2
+        import numpy as np
+
+        data = np.asarray(arr, dtype=np.float64)
+        if data.size == 0:
+            return data
+        radius = max(1, int(4.0 * sigma + 0.5))
+        return cv2.GaussianBlur(
+            data.reshape(1, -1),
+            (2 * radius + 1, 1),
+            sigmaX=sigma,
+            sigmaY=0,
+            borderType=cv2.BORDER_REFLECT,
+        ).ravel()
+
     def _get_potential_upgrade_locs(self, menu, exclude_new=False):
         import numpy as np
-        from scipy.ndimage import gaussian_filter1d
         
         def profile_bounds(profile):
             bounds = []
@@ -464,9 +638,9 @@ class Upgrader:
         menu_white = filter_color([255, 255, 255], menu, tol=15, return_mask=True)[1]
         menu_green = filter_color([180, 247, 86], menu, tol=25, return_mask=True)[1]
         # menu_red = filter_color((255, 123, 114), menu, tol=0, return_mask=True)[1]
-        white_profile = np.where(gaussian_filter1d(menu_white.mean(axis=1), sigma=1) > 0.01, 1, 0)
-        green_profile = np.where(gaussian_filter1d(menu_green.mean(axis=1), sigma=1) > 0.01, 1, 0)
-        # red_profile = np.where(gaussian_filter1d(menu_red.mean(axis=1), sigma=1) > 0.01, 1, 0)
+        white_profile = np.where(self._gaussian_1d(menu_white.mean(axis=1), sigma=1) > 0.01, 1, 0)
+        green_profile = np.where(self._gaussian_1d(menu_green.mean(axis=1), sigma=1) > 0.01, 1, 0)
+        # red_profile = np.where(self._gaussian_1d(menu_red.mean(axis=1), sigma=1) > 0.01, 1, 0)
         white_bounds, white_centers = profile_bounds(white_profile)
         green_bounds, green_centers = profile_bounds(green_profile)
         # red_bounds, red_centers = profile_bounds(red_profile)
@@ -481,13 +655,12 @@ class Upgrader:
 
     def _find_builder_confirm(self):
         import cv2, numpy as np
-        from scipy.ndimage import gaussian_filter1d
         thresh = 0.2
         section = Frame_Handler.get_frame_section(0.0, 0.9, 1.0, 0.92, grayscale=False)
         section = cv2.cvtColor(section, cv2.COLOR_RGB2LAB).astype(np.float32)
         btn_color = cv2.cvtColor(np.array([[[189, 230, 76]]], dtype=np.uint8), cv2.COLOR_RGB2LAB).astype(np.float32)
         diff = np.linalg.norm((section - btn_color)/255, axis=2).mean(0)
-        diff = gaussian_filter1d(diff, sigma=10)
+        diff = self._gaussian_1d(diff, sigma=10)
         min_loc = np.argmin(diff)
         x = min_loc / section.shape[1]
         if diff[min_loc] > thresh: return None, None
@@ -549,75 +722,76 @@ class Upgrader:
                 self._scroll_to_menu_bottom(menu_left, menu_right, menu_top, menu_bottom)
             
             town_hall_template = [render_text("Town Hall", "SupercellMagic", 17)]
-            hero_templates = [render_text(text, "SupercellMagic", 17) for text in Cache_Manager.get("vocab", get_vocab())["heroes"]]
+            sug_template = self._get_suggested_upgrade_template()
+            hero_templates = [render_text(text, "SupercellMagic", 17) for text in (Cache_Manager.get("vocab") or get_vocab())["heroes"]]
             seasonal_defense_template = [render_text("Crafting Station", "SupercellMagic", 17)]
+            builders_hut_template = [render_text("Builder's Hut", "SupercellMagic", 17)]
             heros_excluded = Task_Handler.excluded("heroes")
+            place_new = getattr(configs, "PLACE_NEW_BUILDINGS", True)
             has_unplaced_new = False
+            selected_is_new = False
             
             def locate_upgrade():
-                nonlocal has_unplaced_new
+                nonlocal has_unplaced_new, selected_is_new
+                selected_is_new = False
                 frame = Frame_Handler.get_frame(grayscale=False)
                 menu = Frame_Handler.crop(frame, menu_left, menu_top, menu_right, menu_bottom)
-                # x_sug, y_sug = Frame_Handler.locate(sug_template, frame, thresh=0.70, grayscale=True, prefilter=True)
+                _, y_sug_cur = Frame_Handler.locate(sug_template, frame, thresh=0.68, grayscale=True, prefilter=False)
 
-                # Find a valid upgrade
+                # Find existing (non-'New') upgrade rows first
                 potential_y_locs = self._get_potential_upgrade_locs(menu, exclude_new=True)
-                if len(potential_y_locs) == 0:
-                    all_locs = self._get_potential_upgrade_locs(menu, exclude_new=False)
-                    if len(all_locs) > 0:
-                        has_unplaced_new = True
+                all_y_locs = self._get_potential_upgrade_locs(menu, exclude_new=False)
+                potential_y_locs = potential_y_locs / WINDOW_DIMS[1] + menu_top
+                all_y_locs = all_y_locs / WINDOW_DIMS[1] + menu_top
+                if y_sug_cur is not None:
+                    potential_y_locs = potential_y_locs[potential_y_locs > y_sug_cur]
+                    all_y_locs = all_y_locs[all_y_locs > y_sug_cur]
+
+                if len(potential_y_locs) == 0 and len(all_y_locs) == 0:
                     logger.debug("home_random_upgrade: potential_y_locs=0")
                     return None, None
-                potential_y_locs = potential_y_locs / WINDOW_DIMS[1] + menu_top
-                # if y_sug is not None: potential_y_locs = potential_y_locs[potential_y_locs > y_sug]
                 
-                # Locate invalid upgrades
-                invalid_templates = town_hall_template + hero_templates + seasonal_defense_template
-                locs = Frame_Handler.batch_locate(invalid_templates, menu, thresh=0.75, ref="lc", null_val=-1, grayscale=True, normalize=False, return_all=True)
-                town_hall_loc, hero_locs, seasonal_defense_locs = chunk_list(locs, [1, len(hero_templates), 1])
-                invalid_locs = town_hall_loc[0] + seasonal_defense_locs[0]
+                # Locate invalid / protected upgrades (including gem-only Builder's Hut)
+                invalid_templates = town_hall_template + hero_templates + seasonal_defense_template + builders_hut_template
+                locs = Frame_Handler.batch_locate(invalid_templates, menu, thresh=0.68, ref="lc", null_val=-1, grayscale=True, normalize=False, return_all=True)
+                town_hall_loc, hero_locs, seasonal_defense_locs, builders_hut_locs = chunk_list(locs, [1, len(hero_templates), 1, 1])
+                invalid_locs = town_hall_loc[0] + seasonal_defense_locs[0] + builders_hut_locs[0]
                 town_hall_loc = town_hall_loc[0][0]
                 if heros_excluded:
-                    for locs in hero_locs: invalid_locs += locs
+                    for h_locs in hero_locs: invalid_locs += h_locs
                 invalid_y_locs = np.array(invalid_locs)[:, 1] / WINDOW_DIMS[1] + menu_top
 
-                # Choose an upgrade
-                valid_y_locs = [y for y in potential_y_locs if min(abs(invalid_y_locs - y)) > 0.02]
-                if len(valid_y_locs) == 0:
-                    all_locs = self._get_potential_upgrade_locs(menu, exclude_new=False)
-                    if len(all_locs) > len(potential_y_locs):
-                        has_unplaced_new = True
+                # Choose an existing non-Town Hall upgrade first
+                valid_y_locs = [
+                    y for y in potential_y_locs
+                    if min(abs(invalid_y_locs - y)) > 0.02
+                    and not self._row_uses_gems(frame, y, menu_left, menu_right)
+                ]
                 logger.debug(f"home_random_upgrade: potential_y_locs={len(potential_y_locs)}, valid_y_locs={len(valid_y_locs)}")
 
-                # Prioritize discounted upgrades
-                discounted_upgrades = []
-                # if len(valid_y_locs) > 0:
-                #     discounted_locs = Frame_Handler.locate(self.assets["green_tag"], menu, thresh=0.80, grayscale=False, normalize=False, return_all=True)
-                #     for x, y in discounted_locs:
-                #         if len(valid_y_locs) == 0: break
-                #         if x is None or y is None: continue
-                #         y_global = y / WINDOW_DIMS[1] + menu_top
-                #         min_idx = np.argmin(abs(valid_y_locs - y_global))
-                #         if abs(valid_y_locs[min_idx] - y_global) < 0.02:
-                #             discounted_upgrades.append(valid_y_locs[min_idx])
-                #             valid_y_locs = np.delete(valid_y_locs, min_idx)
+                if len(valid_y_locs) > 0:
+                    return menu_center, float(np.random.choice(valid_y_locs))
 
-                if len(discounted_upgrades) > 0:
-                    x_upgrade, y_upgrade = menu_center, np.random.choice(discounted_upgrades)
-                elif len(valid_y_locs) > 0:
-                    x_upgrade, y_upgrade = menu_center, np.random.choice(valid_y_locs)
-                else:
-                    x_upgrade, y_upgrade = None, None
+                # Check affordable non-gem 'New' buildings before falling back to Town Hall
+                new_y_locs = [
+                    y for y in all_y_locs
+                    if (len(potential_y_locs) == 0 or min(abs(potential_y_locs - y)) > 0.015)
+                    and min(abs(invalid_y_locs - y)) > 0.02
+                    and not self._row_uses_gems(frame, y, menu_left, menu_right)
+                    and self._get_sufficient_resources(self._row_section(frame, y, menu_left, menu_right, pad_top=0.015, pad_bottom=0.030))
+                ]
+                if len(new_y_locs) > 0:
+                    if place_new:
+                        selected_is_new = True
+                        return menu_center, float(np.random.choice(new_y_locs))
+                    has_unplaced_new = True
 
-                if x_upgrade is None or y_upgrade is None:
-                    # If no valid upgrades found but town hall is found, then upgrade it
-                    if town_hall_loc != (-1, -1):
-                        th_y = town_hall_loc[1] / WINDOW_DIMS[1] + menu_top
-                        if min(abs(th_y - potential_y_locs)) < 0.02:
-                            x_upgrade, y_upgrade = menu_center, th_y
-                        else: return None, None
-                    else: return None, None
-                return x_upgrade, y_upgrade
+                # If no valid upgrades or new placements found, fall back to Town Hall
+                if town_hall_loc != (-1, -1) and len(potential_y_locs) > 0:
+                    th_y = town_hall_loc[1] / WINDOW_DIMS[1] + menu_top
+                    if min(abs(th_y - potential_y_locs)) < 0.02:
+                        return menu_center, float(th_y)
+                return None, None
             
             # Choose an upgrade
             x_upgrade, y_upgrade = self._scroll_locate_upgrade(
@@ -632,8 +806,26 @@ class Upgrader:
                 if has_unplaced_new:
                     logger.warning("Only unplaced 'New' shop buildings remain (place them on the map first so Town Hall and new buildings can be upgraded).")
                 return None
+
+            selected_frame = Frame_Handler.get_frame(grayscale=False, use_cached=True)
+            is_new = selected_is_new or self._is_new_row(selected_frame, y_upgrade, menu_left, menu_right)
+            if is_new and self._row_uses_gems(selected_frame, y_upgrade, menu_left, menu_right):
+                logger.info("Skipping gem-cost shop item during random upgrade.")
+                return None
+
+            new_name = self._identify_home_row_name(selected_frame, y_upgrade, menu_left, menu_right) if is_new else None
+            if new_name == "builder's hut":
+                logger.info("Skipping Builder's Hut to avoid spending gems.")
+                return None
+
             Input_Handler.click(x_upgrade, y_upgrade)
             time.sleep(0.5)
+
+            if is_new:
+                if not self._place_new_building():
+                    return None
+                time.sleep(0.5)
+                return new_name or "new building"
             
             # Try to click upgrade button (only for walls)
             self._click_upgrade(0.5)
@@ -648,7 +840,7 @@ class Upgrader:
             ])
             
             # Hero upgrades go directly to confirm screen now
-            in_hero_hall = upgrade_name in Cache_Manager.get("vocab", get_vocab())["heroes"]
+            in_hero_hall = upgrade_name in (Cache_Manager.get("vocab") or get_vocab())["heroes"]
             if in_hero_hall and Task_Handler.excluded("heroes"): return None
             
             # Click confirm button
@@ -671,10 +863,16 @@ class Upgrader:
             # Render templates
             if type(upgrade_text) == str: upgrade_text = [upgrade_text]
             if Task_Handler.excluded("heroes"):
-                upgrade_text = list(set(upgrade_text) - set(Cache_Manager.get("vocab", get_vocab())["heroes"]))
-            if len(upgrade_text) == 0: return None
-            templates = self._get_upgrade_templates(upgrade_text, include_new=False)
-            np.random.shuffle(templates)
+                upgrade_text = list(set(upgrade_text) - set((Cache_Manager.get("vocab") or get_vocab())["heroes"]))
+            # Never auto-buy Builder's Hut or other gem purchases
+            candidate_names = [name for name in upgrade_text if name.strip().lower() != "builder's hut"]
+            if len(candidate_names) == 0: return None
+
+            place_new = getattr(configs, "PLACE_NEW_BUILDINGS", True)
+            templates = self._get_upgrade_templates(candidate_names, include_new=False)
+            combined = list(zip(templates, candidate_names))
+            np.random.shuffle(combined)
+            templates, candidate_names = zip(*combined)
             
             # Open upgrade list menu
             sug_template = self._get_suggested_upgrade_template()
@@ -692,18 +890,35 @@ class Upgrader:
                 self._scroll_to_menu_bottom(menu_left, menu_right, menu_top, menu_bottom)
             
             # Find upgrade text
+            locate_thresh = 0.68 if place_new else 0.72
+            selected_info = {"name": None, "is_new": False}
+
             def locate_upgrade():
                 frame = Frame_Handler.get_frame(grayscale=False)
-                x_sug, y_sug = Frame_Handler.locate(sug_template, frame, thresh=0.70, grayscale=True, prefilter=False)
-                res = Frame_Handler.batch_locate(templates, frame, thresh=0.72, ref="lc", return_all=True, grayscale=False, prefilter=False)
-                non_discounted_upgrades = []
-                for items in res:
+                x_sug_cur, y_sug_cur = Frame_Handler.locate(sug_template, frame, thresh=0.70, grayscale=True, prefilter=False)
+                res = Frame_Handler.batch_locate(
+                    templates,
+                    frame,
+                    thresh=locate_thresh,
+                    ref="lc",
+                    return_all=True,
+                    grayscale=True,
+                    prefilter=False,
+                )
+                candidates = []
+                for items, name in zip(res, candidate_names):
                     for x, y in items:
                         if (
                             x is not None and y is not None
-                            and (y_sug is None or (y_sug is not None and y > y_sug))
+                            and x >= menu_left - 0.01
+                            and (y_sug_cur is None or y > y_sug_cur)
                             and y + 0.025 < menu_bottom
                         ):
+                            if self._row_uses_gems(frame, y, menu_left, menu_right):
+                                continue
+                            is_new_row = self._is_new_row(frame, y, menu_left, menu_right)
+                            if is_new_row and not place_new:
+                                continue
                             section = Frame_Handler.crop(
                                 frame,
                                 menu_left,
@@ -711,18 +926,14 @@ class Upgrader:
                                 menu_right,
                                 min(1.0, y + 0.025),
                             )
-                            sufficient_resources = self._get_sufficient_resources(section)
-                            if sufficient_resources:
-                                non_discounted_upgrades.append((x, y))
-                                continue
+                            if self._get_sufficient_resources(section):
+                                candidates.append((x, y, name, is_new_row))
 
-                                # Or if it is aligned to green discount tag
-                                tag_x, tag_y = Frame_Handler.locate(self.assets["green_tag"], section, thresh=0.80, grayscale=False, ref="rc", normalize=False)
-                                if tag_x is not None and tag_y is not None and abs(x - (menu_left + tag_x/WINDOW_DIMS[1])) < 0.02:
-                                    return x, y # Prioritize discounted upgrades
-                
-                if len(non_discounted_upgrades) > 0:
-                    return non_discounted_upgrades[0]
+                if len(candidates) > 0:
+                    x_pick, y_pick, pick_name, pick_is_new = candidates[0]
+                    selected_info["name"] = pick_name
+                    selected_info["is_new"] = pick_is_new
+                    return x_pick, y_pick
                 return None, None
             
             x, y = self._scroll_locate_upgrade(
@@ -735,8 +946,14 @@ class Upgrader:
             )
             
             if x is None or y is None: return None
-            Input_Handler.click(x_sug, y)
+            Input_Handler.click(menu_center, y)
             time.sleep(0.5)
+
+            if selected_info["is_new"]:
+                if not self._place_new_building():
+                    return None
+                time.sleep(0.5)
+                return selected_info["name"].lower()
             
             # Try to click upgrade button (only for walls)
             self._click_upgrade(0.5)
@@ -751,7 +968,7 @@ class Upgrader:
             ])
             
             # Hero upgrades go directly to confirm screen now
-            in_hero_hall = upgrade_name in Cache_Manager.get("vocab", get_vocab())["heroes"]
+            in_hero_hall = upgrade_name in (Cache_Manager.get("vocab") or get_vocab())["heroes"]
             if in_hero_hall:
                 if Task_Handler.excluded("heroes"): return None
             
@@ -1566,7 +1783,10 @@ class Upgrader:
                     if upgraded is not None:
                         upgraded = upgraded.lower()
                         logger.info(f"Home upgrade attempt #{counter}: '{upgraded}' (builders: {initial_builders} -> {final_builders})")
-                        if final_builders < initial_builders or upgraded == "wall":
+                        instant_upgrades = {"wall"} | {
+                            t.lower() for t in Cache_Manager.get("vocab", {}).get("traps/home-village", [])
+                        }
+                        if final_builders < initial_builders or upgraded in instant_upgrades:
                             upgrades_started.append(upgraded)
                         elif final_builders == initial_builders:
                             break
