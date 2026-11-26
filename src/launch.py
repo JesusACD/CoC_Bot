@@ -16,8 +16,8 @@ def launch_proc(args):
     
     once = getattr(args, "once", False)
     parse_args(args.debug, args.id, args.gui, args.gui_port, once=once)
-    init_instance(args.id)
     enable_logging(args.id)
+    init_instance(args.id)
     bot = CoC_Bot()
     try:
         bot.run(once=once)

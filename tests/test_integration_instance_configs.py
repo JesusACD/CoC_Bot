@@ -137,3 +137,105 @@ def test_gui_server_instance_uses_per_instance_overrides_and_hides_rotate_from_i
     res_home = client.get("/")
     assert res_home.status_code == 200
     assert b"/instances/rotate" not in res_home.data
+
+
+def test_coc_bot_step_skips_builder_base_when_overridden_for_instance():
+    import coc_bot
+
+    configs.INSTANCE_IDS = ["main", "cuenta1"]
+    configs.UPGRADE_BUILDER_BASE = True
+    configs.UPGRADE_BUILDER_LAB = True
+    configs.ATTACK_BUILDER_BASE = True
+    configs.UPGRADE_HOME_BASE = True
+    configs.ATTACK_HOME_BASE = True
+    configs.AUTO_START_EMULATOR = False
+    configs.WEB_APP_URL = ""
+    configs.LOCAL_GUI = False
+    configs.INSTANCE_CONFIGS = {
+        "cuenta1": {
+            "UPGRADE_BUILDER_BASE": False,
+            "UPGRADE_BUILDER_LAB": False,
+            "ATTACK_BUILDER_BASE": False,
+        }
+    }
+    config_manager.snapshot_base_configs(configs, force=True)
+
+    with (
+        patch.object(utils, "request_perms"),
+        patch.object(utils._Emulator_Manager, "adb_address", new="127.0.0.1:5555"),
+    ):
+        utils.init_instance("cuenta1")
+
+    utils.Task_Handler.cache_valid = False
+    bot = coc_bot.CoC_Bot()
+    bot.upgrader = MagicMock()
+    bot.attacker = MagicMock()
+
+    with (
+        patch.object(coc_bot, "online", return_value=True),
+        patch.object(coc_bot, "running", return_value=True),
+        patch.object(coc_bot, "start_coc", return_value=(True, "ok")),
+        patch.object(coc_bot, "update_status"),
+        patch.object(coc_bot, "to_home_base"),
+        patch.object(coc_bot, "to_builder_base") as mock_to_builder,
+        patch.object(coc_bot, "stop_coc"),
+    ):
+        assert bot.step() is True
+
+    bot.upgrader.run_home_base.assert_called_once()
+    bot.attacker.run_home_base.assert_called_once()
+    mock_to_builder.assert_not_called()
+    bot.upgrader.run_builder_base.assert_not_called()
+    bot.attacker.run_builder_base.assert_not_called()
+
+
+def test_attacker_start_normal_attack_handles_none_tuples_without_type_error():
+    import attacker
+
+    atk = attacker.Attacker()
+
+    def fake_locate(template, frame, thresh=0.7, return_all=False, **kwargs):
+        if return_all:
+            return [(None, None)]
+        return (0.47, 0.5)
+
+    def immediate_click_with_timeout(locator_func, timeout=5):
+        x, y = locator_func()
+        return x is not None and y is not None
+
+    with (
+        patch.object(attacker.Input_Handler, "click"),
+        patch.object(attacker, "render_text", return_value=MagicMock()),
+        patch.object(attacker.Frame_Handler, "get_frame", return_value=MagicMock()),
+        patch.object(attacker.Frame_Handler, "locate", side_effect=fake_locate),
+        patch.object(attacker, "click_with_timeout", side_effect=immediate_click_with_timeout),
+    ):
+        assert atk.start_normal_attack(timeout=1) is False
+
+
+def test_launch_proc_enables_logging_before_init_instance():
+    import types
+    import launch
+    import log
+    import coc_bot
+
+    call_order = []
+
+    def fake_enable_logging(inst_id):
+        call_order.append(("enable_logging", inst_id))
+
+    def fake_init_instance(inst_id):
+        call_order.append(("init_instance", inst_id))
+
+    fake_args = types.SimpleNamespace(debug=False, id="main", gui=False, gui_port=None, once=True)
+
+    with (
+        patch.object(utils, "parse_args", return_value=fake_args),
+        patch.object(log, "enable_logging", side_effect=fake_enable_logging),
+        patch.object(utils, "init_instance", side_effect=fake_init_instance),
+        patch.object(coc_bot, "CoC_Bot", return_value=MagicMock()),
+        patch.object(utils.Emulator_Manager, "stop"),
+    ):
+        launch.launch_proc(fake_args)
+
+    assert call_order == [("enable_logging", "main"), ("init_instance", "main")]

@@ -53,13 +53,13 @@ class Attacker:
             bx, by = Frame_Handler.locate(battle_temp, frame, thresh=0.7)
             if bx is None or by is None: return None, None
             xys = Frame_Handler.locate(find_a_match_temp, frame, thresh=0.7, return_all=True)
-            if xys == [[None, None]]: return None, None
-            xys = np.array(xys)
+            valid_xys = [(x, y) for x, y in xys if x is not None and y is not None]
+            if not valid_xys: return None, None
+            xys = np.array(valid_xys, dtype=float)
             dists = abs(xys[:, 0] - bx)
             if min(dists) > 0.01: return None, None
             x, y = xys[np.argmin(dists)]
-            if x is None or y is None: return None, None
-            return x, y
+            return float(x), float(y)
         if not click_with_timeout(
             locate_find_a_match,
             timeout=5
