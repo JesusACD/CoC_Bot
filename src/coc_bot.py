@@ -41,27 +41,35 @@ class CoC_Bot:
             exclude_builder_attacks = Task_Handler.excluded("builder_attacks", use_cached=True)
             
             # Check home base
+            in_home = True
             if not skip_home_base_upgrades or not exclude_home_attacks:
-                to_home_base(ref_cache=True)
+                in_home = to_home_base(ref_cache=True)
             
-            if not skip_home_base_upgrades:
-                logger.info("Upgrading home base")
-                self.upgrader.run_home_base(exclude_home_base, exclude_home_lab, exclude_pets)
-            if not exclude_home_attacks:
-                logger.info("Attacking home base")
-                self.attacker.run_home_base(restart=not skip_home_base_upgrades or not skip_builder_base_upgrades)
+            if in_home:
+                if not skip_home_base_upgrades:
+                    logger.info("Upgrading home base")
+                    self.upgrader.run_home_base(exclude_home_base, exclude_home_lab, exclude_pets)
+                if not exclude_home_attacks:
+                    logger.info("Attacking home base")
+                    self.attacker.run_home_base(restart=not skip_home_base_upgrades or not skip_builder_base_upgrades)
+            else:
+                logger.error("Could not confirm home base; skipping home base tasks to avoid acting on builder base.")
             
             # Check builder base
+            in_builder = False
             if not skip_builder_base_upgrades or not exclude_builder_attacks:
-                to_builder_base(ref_cache=True)
+                in_builder = to_builder_base(ref_cache=True)
             
-            if not skip_builder_base_upgrades:
-                logger.info("Upgrading builder base")
-                self.upgrader.collect_builder_attack_elixir()
-                self.upgrader.run_builder_base(exclude_builder_base, exclude_builder_lab)
-            if not exclude_builder_attacks:
-                logger.info("Attacking builder base")
-                self.attacker.run_builder_base()
+            if in_builder:
+                if not skip_builder_base_upgrades:
+                    logger.info("Upgrading builder base")
+                    self.upgrader.collect_builder_attack_elixir()
+                    self.upgrader.run_builder_base(exclude_builder_base, exclude_builder_lab)
+                if not exclude_builder_attacks:
+                    logger.info("Attacking builder base")
+                    self.attacker.run_builder_base()
+            elif not skip_builder_base_upgrades or not exclude_builder_attacks:
+                logger.error("Could not confirm builder base; skipping builder base tasks.")
             
             to_home_base()
             stop_coc(sleep=configs.SUSPEND_EMULATOR_ON_IDLE)

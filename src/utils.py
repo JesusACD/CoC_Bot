@@ -497,22 +497,40 @@ def extend_pythonanywhere_hosting(username, password):
     )
     assert res.url == webapps_url
 
-def in_home_base():
-    return Frame_Handler.locate(
+def detect_village(use_cached=False, thresh=0.7):
+    """Detect whether the current screen is 'home_base', 'builder_base', or None by comparing both gold icons."""
+    frame = Frame_Handler.get_frame(grayscale=False, use_cached=use_cached)
+    _, _, home_conf = Frame_Handler.locate(
         Asset_Manager.upgrader_assets["home_gold"],
+        frame,
         grayscale=False,
         prefilter=False,
-        thresh=0.7
-    ) != (None, None)
+        return_confidence=True,
+    )
+    _, _, builder_conf = Frame_Handler.locate(
+        Asset_Manager.upgrader_assets["builder_gold"],
+        frame,
+        grayscale=False,
+        prefilter=False,
+        return_confidence=True,
+    )
+    if home_conf < thresh and builder_conf < thresh:
+        return None
+    return "home_base" if home_conf >= builder_conf else "builder_base"
+
+def in_home_base(use_cached=False):
+    return detect_village(use_cached=use_cached) == "home_base"
 
 def to_home_base(ref_cache=False):
     import cv2, time, numpy as np
     
-    if ref_cache and TEMP_CACHE.get("location") == "home_base": return
+    if ref_cache and TEMP_CACHE.get("location") == "home_base":
+        if in_home_base():
+            return True
     
-    TEMP_CACHE["location"] = "home_base"
-    
-    if in_home_base(): return
+    if in_home_base():
+        TEMP_CACHE["location"] = "home_base"
+        return True
     
     Input_Handler.zoom(dir="out")
     for _ in range(3):
@@ -521,16 +539,34 @@ def to_home_base(ref_cache=False):
         Input_Handler.swipe_left(duration=0)
     
     scale_templates = []
-    for scale in np.arange(0.43, 0.47, 0.01):
+    for scale in np.arange(0.41, 0.51, 0.02):
         scale_templates.append(cv2.resize(Asset_Manager.misc_assets["boat_icon"], None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST))
     
     for _ in range(5):
         xys = Frame_Handler.batch_locate(scale_templates, grayscale=True, thresh=0.7, ref="cc")
+        clicked = False
         for x, y in xys:
             if x is None or y is None: continue
             Input_Handler.click(x, y)
-            time.sleep(2)
-            return
+            clicked = True
+            break
+        if clicked:
+            wait_start = time.time()
+            while time.time() - wait_start < 6:
+                time.sleep(1)
+                if in_home_base():
+                    TEMP_CACHE["location"] = "home_base"
+                    logger.info("Switched to home base.")
+                    return True
+        Input_Handler.swipe(x1=0.5, y1=0.5, x2=0.75, y2=0.25, hold_end_time=100)
+    
+    current = detect_village()
+    if current is not None:
+        TEMP_CACHE["location"] = current
+    else:
+        TEMP_CACHE.pop("location", None)
+    logger.warning(f"Failed to switch to home base (detected village: {current}).")
+    return False
 
 def start_coc(timeout=60, detailed=False):
     import time
@@ -557,11 +593,9 @@ def start_coc(timeout=60, detailed=False):
             
             Frame_Handler.get_frame()
             
-            if in_home_base():
-                TEMP_CACHE["location"] = "home_base"
-                break
-            elif in_builder_base():
-                TEMP_CACHE["location"] = "builder_base"
+            village = detect_village(use_cached=True)
+            if village is not None:
+                TEMP_CACHE["location"] = village
                 break
 
             cont_locs = Frame_Handler.batch_locate(cont_templates, grayscale=False, thresh=0.7, prefilter=False, ref="cc", use_cached=True)
@@ -616,22 +650,19 @@ def update_coc(timeout=10, from_in_game=False):
         pass
     if not from_in_game: to_system_home()
 
-def in_builder_base():
-    return Frame_Handler.locate(
-        Asset_Manager.upgrader_assets["builder_gold"],
-        grayscale=False,
-        prefilter=False,
-        thresh=0.7
-    ) != (None, None)
+def in_builder_base(use_cached=False):
+    return detect_village(use_cached=use_cached) == "builder_base"
 
 def to_builder_base(ref_cache=False):
     import cv2, time, numpy as np
     
-    if ref_cache and TEMP_CACHE.get("location") == "builder_base": return
+    if ref_cache and TEMP_CACHE.get("location") == "builder_base":
+        if in_builder_base():
+            return True
     
-    TEMP_CACHE["location"] = "builder_base"
-    
-    if in_builder_base(): return
+    if in_builder_base():
+        TEMP_CACHE["location"] = "builder_base"
+        return True
     
     for _ in range(3):
         Input_Handler.zoom(dir="in")
@@ -642,17 +673,34 @@ def to_builder_base(ref_cache=False):
         Input_Handler.swipe_up()
     
     scale_templates = []
-    for scale in np.arange(0.43, 0.47, 0.01):
+    for scale in np.arange(0.41, 0.51, 0.02):
         scale_templates.append(cv2.resize(Asset_Manager.misc_assets["boat_icon"], None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST))
 
     for _ in range(5):
         xys = Frame_Handler.batch_locate(scale_templates, grayscale=True, thresh=0.7, ref="cc")
+        clicked = False
         for x, y in xys:
             if x is None or y is None: continue
             Input_Handler.click(x, y)
-            time.sleep(2)
-            return
+            clicked = True
+            break
+        if clicked:
+            wait_start = time.time()
+            while time.time() - wait_start < 6:
+                time.sleep(1)
+                if in_builder_base():
+                    TEMP_CACHE["location"] = "builder_base"
+                    logger.info("Switched to builder base.")
+                    return True
         Input_Handler.swipe(x1=0.5, y1=0.5, x2=0.25, y2=0.75, hold_end_time=100)
+    
+    current = detect_village()
+    if current is not None:
+        TEMP_CACHE["location"] = current
+    else:
+        TEMP_CACHE.pop("location", None)
+    logger.warning(f"Failed to switch to builder base (detected village: {current}).")
+    return False
 
 class classproperty:
     def __init__(self, func):
