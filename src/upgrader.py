@@ -49,10 +49,27 @@ class Upgrader:
         return click_with_timeout(locate, timeout=timeout)
 
     def _click_home_confirm(self, timeout=5):
-        return click_with_timeout(
-            lambda: Frame_Handler.locate(self.assets["confirm"], grayscale=False, thresh=0.7, use_cached=True),
-            timeout=timeout
-        )
+        import time
+
+        start = time.time()
+        while time.time() - start < timeout:
+            frame = Frame_Handler.get_frame(grayscale=False)
+            x, y = Frame_Handler.locate(self.assets["confirm"], frame, grayscale=False, thresh=0.7)
+            if x is not None and y is not None:
+                btn_section = Frame_Handler.crop(
+                    frame,
+                    max(0.0, x - 0.08),
+                    max(0.0, y - 0.05),
+                    min(1.0, x + 0.08),
+                    min(1.0, y + 0.05),
+                )
+                if not self._get_sufficient_resources(btn_section):
+                    logger.info("Confirm button shows insufficient resources; skipping upgrade.")
+                    return False
+                Input_Handler.click(x, y)
+                return True
+            time.sleep(0.2)
+        return False
 
     def _click_builder_confirm(self, timeout=5):
         return click_with_timeout(
@@ -353,7 +370,7 @@ class Upgrader:
         return templates
     
     def _get_sufficient_resources(self, section):
-        return not check_color((255, 123, 114), section, tol=10)
+        return not check_color((255, 123, 114), section, tol=45)
 
     def _get_upgrade_name(self, categories=["all"]):
         import numpy as np
@@ -571,7 +588,7 @@ class Upgrader:
             
             # Hero upgrades go directly to confirm screen now
             in_hero_hall = upgrade_name in Cache_Manager.get("vocab", get_vocab())["heroes"]
-            if in_hero_hall and Task_Handler.excluded("heros"): return None
+            if in_hero_hall and Task_Handler.excluded("heroes"): return None
             
             # Click confirm button
             if not self._click_home_confirm(): return None
@@ -628,7 +645,13 @@ class Upgrader:
                             and (y_sug is None or (y_sug is not None and y > y_sug))
                             and y + 0.025 < menu_bottom
                         ):
-                            section = Frame_Handler.crop(frame, menu_left, y, menu_right, y+0.025)
+                            section = Frame_Handler.crop(
+                                frame,
+                                menu_left,
+                                max(0.0, y - 0.015),
+                                menu_right,
+                                min(1.0, y + 0.025),
+                            )
                             sufficient_resources = self._get_sufficient_resources(section)
                             if sufficient_resources:
                                 non_discounted_upgrades.append((x, y))
