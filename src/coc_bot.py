@@ -32,7 +32,8 @@ class CoC_Bot:
             exclude_home_base = Task_Handler.excluded("home_base", use_cached=True)
             exclude_home_lab = Task_Handler.excluded("home_lab", use_cached=True)
             exclude_pets = Task_Handler.excluded("pet_house", use_cached=True)
-            skip_home_base_upgrades = exclude_home_base and exclude_home_lab and exclude_pets
+            exclude_obstacles = Task_Handler.excluded("remove_obstacles", use_cached=True)
+            skip_home_base_upgrades = exclude_home_base and exclude_home_lab and exclude_pets and exclude_obstacles
             exclude_home_attacks = Task_Handler.excluded("home_attacks", use_cached=True)
             
             exclude_builder_base = Task_Handler.excluded("builder_base", use_cached=True)
@@ -50,7 +51,7 @@ class CoC_Bot:
             if in_home:
                 if not skip_home_base_upgrades:
                     logger.info("Upgrading home base")
-                    self.upgrader.run_home_base(exclude_home_base, exclude_home_lab, exclude_pets)
+                    self.upgrader.run_home_base(exclude_home_base, exclude_home_lab, exclude_pets, exclude_obstacles)
                 if not exclude_home_attacks:
                     logger.info("Attacking home base")
                     self.attacker.run_home_base(restart=want_builder_base)

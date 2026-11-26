@@ -39,6 +39,7 @@ CHECK_INTERVAL = 5 # minutes
 
 # REQUIRED: Upgrade settings
 MAX_UPGRADES_PER_CHECK = 10 # applies to both home and builder base
+MAX_OBSTACLES_PER_CHECK = 6 # maximum common obstacles to remove per home base check
 START_FROM_MENU_TOP = True
 
 #   Home base upgrade settings
@@ -47,7 +48,7 @@ OPEN_HOME_BUILDERS = 0 # number of home base builders to keep open (not upgradin
 UPGRADE_HEROES = True # can be overridden on desktop or web app
 UPGRADE_HOME_BASE = True # can be overridden on desktop or web app
 PLACE_NEW_BUILDINGS = True # automatically buy and place unlocked "New" shop buildings (never spends gems)
-PLACE_NEW_BUILDINGS = True # purchase and place unplaced 'New' Home Village buildings (excluding gem items like Builder's Hut)
+REMOVE_OBSTACLES = True # automatically remove common obstacles (trees, trunks, bushes, stones, mushrooms, gem boxes) while keeping special event obstacles (can be overridden on desktop or web app)
 UPGRADE_HOME_LAB = True # can be overridden on desktop or web app
 UPGRADE_PETS = True # can be overridden on desktop or web app
 ASSIGN_LAB_ASSISTANT = True # can be overridden on desktop or web app

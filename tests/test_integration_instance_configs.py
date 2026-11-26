@@ -331,3 +331,32 @@ def test_cmd_rotate_terminates_stalled_instance_and_stops_at_max_rounds():
 
     assert started_ids == ["main", "cuenta1"]
     assert terminated_ids == ["main"]
+
+
+def test_remove_obstacles_per_instance_config_and_gui_exclusion():
+    configs.INSTANCE_IDS = ["main", "clean_alt"]
+    configs.REMOVE_OBSTACLES = True
+    configs.AUTO_START_EMULATOR = False
+    configs.WEB_APP_URL = ""
+    configs.LOCAL_GUI = False
+    configs.INSTANCE_CONFIGS = {
+        "clean_alt": {"REMOVE_OBSTACLES": False},
+    }
+    config_manager.snapshot_base_configs(configs, force=True)
+
+    inst_main = gui_server.Instance("main")
+    inst_alt = gui_server.Instance("clean_alt")
+    assert "remove_obstacles" not in inst_main.exclusions
+    assert "remove_obstacles" in inst_alt.exclusions
+
+    with (
+        patch.object(utils, "request_perms"),
+        patch.object(utils._Emulator_Manager, "adb_address", new="127.0.0.1:5555"),
+    ):
+        utils.init_instance("clean_alt")
+        utils.Task_Handler.cache_valid = False
+        assert utils.Task_Handler.excluded("remove_obstacles") is True
+
+        utils.init_instance("main")
+        utils.Task_Handler.cache_valid = False
+        assert utils.Task_Handler.excluded("remove_obstacles") is False

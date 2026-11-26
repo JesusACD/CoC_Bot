@@ -450,3 +450,116 @@ def test_locate_placement_button_matches_zoomed_in_scale():
 
     empty_frame = np.full((1080, 1920, 3), [120, 170, 60], dtype=np.uint8)
     assert upg._locate_placement_button("place_confirm", empty_frame) == (None, None)
+
+
+def _paint_centered_hc_text(frame, text, font_size, cx_norm, cy_norm, color=(255, 255, 255)):
+    tmpl = utils.render_text(text, "SupercellMagic", font_size, color=color)
+    th, tw = tmpl.shape[:2]
+    fh, fw = frame.shape[:2]
+    x0 = max(0, int(cx_norm * fw - tw / 2))
+    y0 = max(0, int(cy_norm * fh - th / 2))
+    mask = tmpl.max(axis=2) > 30
+    region = frame[y0:y0 + th, x0:x0 + tw]
+    region[mask] = tmpl[mask]
+    return x0, y0, tw, th
+
+
+def test_identify_selected_common_obstacle_accepts_common_and_rejects_special_events():
+    upg = upgrader.Upgrader()
+
+    for label, expected in [
+        ("Tree", "tree"),
+        ("Trunk", "trunk"),
+        ("Bush", "bush"),
+        ("Mushroom", "mushroom"),
+        ("Stone", "stone"),
+        ("Gem Box", "gem box"),
+    ]:
+        frame = np.full((1080, 1920, 3), [150, 178, 70], dtype=np.uint8)
+        _paint_centered_hc_text(frame, label, 26, 0.50, 0.72)
+        assert upg._identify_selected_common_obstacle(frame) == expected
+
+    for special_label in [
+        "12th Anniversary Cake",
+        "2025 Clashmas Tree",
+        "Spooky Tree",
+        "Fortune Tree",
+        "Halloween Headstone",
+        "Glowy Ore Meteorite",
+    ]:
+        frame = np.full((1080, 1920, 3), [150, 178, 70], dtype=np.uint8)
+        _paint_centered_hc_text(frame, special_label, 26, 0.50, 0.72)
+        assert upg._identify_selected_common_obstacle(frame) is None
+
+
+def test_find_remove_button_checks_resources_and_refuses_gems():
+    upg = upgrader.Upgrader()
+
+    # Case 1: Affordable elixir cost + "Remove"
+    ok_frame = np.full((1080, 1920, 3), [120, 150, 60], dtype=np.uint8)
+    _paint_centered_hc_text(ok_frame, "Remove", 24, 0.50, 0.90)
+    _paint_centered_hc_text(ok_frame, "2 000", 18, 0.50, 0.82, color=(255, 255, 255))
+    rx, ry = upg._find_remove_button(ok_frame)
+    assert rx is not None and ry is not None
+    assert abs(rx - 0.50) < 0.02
+
+    # Case 2: Insufficient resources (red price)
+    red_frame = ok_frame.copy()
+    _paint_centered_hc_text(red_frame, "50 000", 18, 0.50, 0.82, color=(255, 123, 114))
+    assert upg._find_remove_button(red_frame) == (None, None)
+
+    # Case 3: Gem cost icon inside button
+    gem_frame = ok_frame.copy()
+    gem_frame[860:880, 950:970] = [100, 230, 80]
+    assert upg._find_remove_button(gem_frame) == (None, None)
+
+
+def test_remove_home_obstacles_instant_and_zero_builders_and_skips_special():
+    upg = upgrader.Upgrader()
+    fake_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    cands = [(0.35, 0.56), (0.28, 0.35)]
+    remove_seq = iter([
+        (0.50, 0.88),  # special event obstacle selected
+        (0.50, 0.88),  # gem box selected
+        (None, None),  # post-click confirmation: Remove button gone immediately
+    ])
+    id_seq = iter([None, "gem box"])
+
+    with (
+        patch.object(upgrader.Input_Handler, "click_exit"),
+        patch.object(upgrader.Input_Handler, "zoom"),
+        patch.object(upgrader.Input_Handler, "swipe_down"),
+        patch.object(upgrader.Input_Handler, "swipe_up"),
+        patch.object(upgrader.Input_Handler, "click") as mock_click,
+        patch.object(upgrader.Frame_Handler, "get_frame", return_value=fake_frame),
+        patch.object(upg, "get_home_builders", return_value=0),
+        patch.object(upg, "_find_obstacle_candidates", return_value=cands),
+        patch.object(upg, "_find_remove_button", side_effect=lambda *a, **kw: next(remove_seq)),
+        patch.object(upg, "_identify_selected_common_obstacle", side_effect=lambda *a, **kw: next(id_seq)),
+        patch("time.sleep"),
+    ):
+        removed = upg.remove_home_obstacles(max_removals=1)
+
+    assert removed == ["gem box"]
+    clicked_pts = [c.args for c in mock_click.call_args_list]
+    assert clicked_pts == [(0.35, 0.56), (0.28, 0.35), (0.50, 0.88)]
+
+
+def test_run_home_base_removes_obstacles_with_zero_builders():
+    upg = upgrader.Upgrader()
+
+    with (
+        patch.object(upgrader.Input_Handler, "zoom"),
+        patch.object(upgrader.Input_Handler, "swipe_down"),
+        patch.object(upgrader, "in_home_base", return_value=True),
+        patch.object(upgrader.Task_Handler, "excluded", side_effect=lambda name, **kw: name != "remove_obstacles"),
+        patch.object(upg, "get_home_builders", return_value=0),
+        patch.object(upg, "remove_home_obstacles", return_value=["tree"]) as mock_remove,
+        patch.object(upg, "assign_lab_assistant"),
+        patch.object(upgrader, "send_notification") as mock_notify,
+    ):
+        upg.run_home_base(exclude_base=True, exclude_lab=True, exclude_pet=True, exclude_obstacles=False)
+
+    mock_remove.assert_called_once_with()
+    mock_notify.assert_called_once_with("Removed obstacles: tree")

@@ -1324,6 +1324,7 @@ class Task_Handler:
         "builder_attacks": "ATTACK_BUILDER_BASE",
         "lab_assistant": "ASSIGN_LAB_ASSISTANT",
         "builder_apprentice": "ASSIGN_BUILDER_APPRENTICE",
+        "remove_obstacles": "REMOVE_OBSTACLES",
     }
     
     @classmethod

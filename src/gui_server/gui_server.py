@@ -44,6 +44,7 @@ class Instance:
             "builder_attacks": not get_instance_config(self.id, "ATTACK_BUILDER_BASE", True, cfg=configs),
             "lab_assistant": not get_instance_config(self.id, "ASSIGN_LAB_ASSISTANT", True, cfg=configs),
             "builder_apprentice": not get_instance_config(self.id, "ASSIGN_BUILDER_APPRENTICE", True, cfg=configs),
+            "remove_obstacles": not get_instance_config(self.id, "REMOVE_OBSTACLES", True, cfg=configs),
         }
         self.exclusions = set(k for k, v in task_settings.items() if v)
 

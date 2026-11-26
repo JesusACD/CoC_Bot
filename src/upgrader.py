@@ -8,6 +8,14 @@ except:
 
 class Upgrader:
     NEVER_BUY_NEW = frozenset({"builder's hut"})
+    COMMON_HOME_OBSTACLES = (
+        "Gem Box",
+        "Mushroom",
+        "Bush",
+        "Trunk",
+        "Tree",
+        "Stone",
+    )
 
     def __init__(self):
         self.assets = Asset_Manager.upgrader_assets
@@ -497,6 +505,249 @@ class Upgrader:
     # ============================================================
     # 🧱 Upgrade Management
     # ============================================================
+
+    def _find_obstacle_candidates(self, frame):
+        """Return grass-isolated obstacle tap targets inside the zoomed-out Home Village."""
+        import cv2
+        import numpy as np
+
+        if frame is None or frame.size == 0 or frame.ndim != 3:
+            return []
+        h, w = frame.shape[:2]
+        poly = np.array(
+            [
+                [0.46 * w, 0.03 * h],
+                [0.87 * w, 0.45 * h],
+                [0.53 * w, 0.78 * h],
+                [0.35 * w, 0.67 * h],
+                [0.13 * w, 0.44 * h],
+            ],
+            dtype=np.int32,
+        )
+        roi = np.zeros((h, w), dtype=np.uint8)
+        cv2.fillPoly(roi, [poly], 255)
+        # Exclude HUD overlays and Builder Base boat area
+        roi[0:int(0.31 * h), int(0.54 * w):w] = 0
+        roi[int(0.38 * h):h, int(0.76 * w):w] = 0
+        roi[0:int(0.24 * h), 0:int(0.24 * w)] = 0
+        roi[:, 0:int(0.13 * w)] = 0
+        roi[int(0.66 * h):h, 0:int(0.35 * w)] = 0
+        roi[int(0.78 * h):h, :] = 0
+
+        r = frame[..., 0].astype(np.int16)
+        g = frame[..., 1].astype(np.int16)
+        b = frame[..., 2].astype(np.int16)
+        is_grass = (
+            (g >= 140) & (g <= 220)
+            & (r >= 110) & (r <= 195)
+            & (b >= 45) & (b <= 110)
+            & ((g - r) >= 12) & ((g - r) <= 50)
+            & ((g - b) >= 70)
+        )
+        non_grass = ((~is_grass) & (roi > 0)).astype(np.uint8) * 255
+        non_grass = cv2.morphologyEx(non_grass, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        non_grass = cv2.morphologyEx(non_grass, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+
+        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(non_grass)
+        raw_candidates = []
+        for idx in range(1, num_labels):
+            x0 = int(stats[idx, cv2.CC_STAT_LEFT])
+            y0 = int(stats[idx, cv2.CC_STAT_TOP])
+            bw = int(stats[idx, cv2.CC_STAT_WIDTH])
+            bh = int(stats[idx, cv2.CC_STAT_HEIGHT])
+            area = int(stats[idx, cv2.CC_STAT_AREA])
+            if not (320 <= area <= 3800 and 16 <= bw <= 90 and 16 <= bh <= 95):
+                continue
+            rx0, ry0 = max(0, x0 - 10), max(0, y0 - 10)
+            rx1, ry1 = min(w, x0 + bw + 10), min(h, y0 + bh + 10)
+            ring = is_grass[ry0:ry1, rx0:rx1].copy()
+            ring[(y0 - ry0):(y0 - ry0 + bh), (x0 - rx0):(x0 - rx0 + bw)] = False
+            ring_total = (ry1 - ry0) * (rx1 - rx0) - bw * bh
+            grass_ratio = float(ring.sum()) / max(1, ring_total)
+            if grass_ratio < 0.45:
+                continue
+            tx = (x0 + 0.5 * bw) / w
+            ty = (y0 + 0.68 * bh) / h
+            raw_candidates.append((tx, ty, grass_ratio))
+
+        raw_candidates.sort(key=lambda item: -item[2])
+        deduped = []
+        for tx, ty, _ in raw_candidates:
+            if all((tx - dx) ** 2 + (ty - dy) ** 2 > 0.035 ** 2 for dx, dy in deduped):
+                deduped.append((tx, ty))
+        return deduped
+
+    def _find_remove_button(self, frame):
+        """Locate the bottom Remove button and verify resource affordability without gems."""
+        if frame is None or frame.size == 0:
+            return None, None
+        action_roi = Frame_Handler.crop(frame, 0.30, 0.76, 0.70, 0.99)
+        if action_roi.size == 0:
+            return None, None
+        hc_roi = Frame_Handler.high_contrast(action_roi.copy(), thresh=235)
+        templates = [render_text("Remove", "SupercellMagic", sz) for sz in (18, 20, 22, 24, 26)]
+        res = Frame_Handler.batch_locate(
+            templates, hc_roi, thresh=0.0, grayscale=True, prefilter=False, return_confidence=True
+        )
+        best_x, best_y, best_conf = max(res, key=lambda item: item[2])
+        if best_x is None or best_y is None or best_conf < 0.72:
+            return None, None
+
+        x_rem = 0.30 + best_x * 0.40
+        y_rem = 0.76 + best_y * 0.23
+        btn_box = Frame_Handler.crop(
+            frame,
+            max(0.0, x_rem - 0.028),
+            max(0.0, y_rem - 0.105),
+            min(1.0, x_rem + 0.028),
+            min(1.0, y_rem - 0.015),
+        )
+        if not self._get_sufficient_resources(btn_box):
+            logger.debug("Obstacle Remove button shows insufficient resources; skipping.")
+            return None, None
+        if btn_box.size > 0 and btn_box.ndim == 3:
+            r = btn_box[..., 0].astype(int)
+            g = btn_box[..., 1].astype(int)
+            b = btn_box[..., 2].astype(int)
+            if int(((g - r > 40) & (g - b > 100) & (g > 150)).sum()) >= 10:
+                logger.info("Obstacle Remove button shows gem icon; refusing to spend gems.")
+                return None, None
+        return x_rem, max(0.79, y_rem - 0.02)
+
+    def _identify_selected_common_obstacle(self, frame, y_rem=0.92):
+        """Return lowercase common obstacle name only when title matches strictly without event prefixes/suffixes."""
+        import cv2
+
+        if frame is None or frame.size == 0:
+            return None
+        y2 = max(0.70, min(0.86, y_rem - 0.06))
+        title_roi = Frame_Handler.crop(frame, 0.25, 0.55, 0.75, y2)
+        if title_roi.size == 0:
+            return None
+        hc_title = Frame_Handler.high_contrast(title_roi.copy(), thresh=235)
+        th_roi, tw_roi = hc_title.shape[:2]
+
+        best_name = None
+        best_conf = 0.0
+        for name in self.COMMON_HOME_OBSTACLES:
+            for sz in (22, 24, 26, 28, 30, 32, 34, 36, 37, 38, 40):
+                tmpl = Frame_Handler.grayscale(render_text(name, "SupercellMagic", sz))
+                th, tw = tmpl.shape[:2]
+                if th >= th_roi or tw >= tw_roi:
+                    continue
+                res = cv2.matchTemplate(hc_title, tmpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val < 0.72 or max_val <= best_conf:
+                    continue
+                x_px, y_px = max_loc
+                cx_norm = 0.25 + ((x_px + tw / 2) / tw_roi) * 0.50
+                if abs(cx_norm - 0.50) > 0.04:
+                    continue
+                left_strip = hc_title[y_px:y_px + th, max(0, x_px - 90):max(0, x_px - 8)]
+                right_strip = hc_title[y_px:y_px + th, min(tw_roi, x_px + tw + 8):min(tw_roi, x_px + tw + 90)]
+                if (left_strip.size > 0 and left_strip.mean() >= 8.0) or (
+                    right_strip.size > 0 and right_strip.mean() >= 8.0
+                ):
+                    continue
+                best_conf = float(max_val)
+                best_name = name.lower()
+        return best_name
+
+    @require_exit(x=0.99, y=0.01)
+    def remove_home_obstacles(self, max_removals=None):
+        """Clear common Home Village obstacles (trees, trunks, bushes, stones, mushrooms, Gem Boxes)."""
+        import time
+
+        if max_removals is None:
+            max_removals = getattr(configs, "MAX_OBSTACLES_PER_CHECK", 6)
+        if max_removals <= 0:
+            return []
+
+        removed = []
+        probe_saved = False
+        for view_idx in range(2):
+            if len(removed) >= max_removals:
+                break
+            Input_Handler.click_exit(x=0.99, y=0.01, n=2, delay=0.1)
+            Input_Handler.zoom(dir="out")
+            if view_idx == 0:
+                Input_Handler.swipe_down()
+            else:
+                Input_Handler.swipe_up(x=0.5, y1=0.75, y2=0.25, duration=200, hold_end_time=150)
+            time.sleep(0.4)
+
+            skipped = []
+            taps_in_view = 0
+            while len(removed) < max_removals and taps_in_view < 14:
+                try:
+                    builders_before = self.get_home_builders(2)
+                except Exception:
+                    break
+
+                Input_Handler.click_exit(x=0.99, y=0.01, n=1, delay=0.1)
+                time.sleep(0.2)
+                frame = Frame_Handler.get_frame(grayscale=False)
+                cands = [
+                    pt for pt in self._find_obstacle_candidates(frame)
+                    if all((pt[0] - sx) ** 2 + (pt[1] - sy) ** 2 > 0.032 ** 2 for sx, sy in skipped)
+                ]
+                if not cands:
+                    break
+
+                tx, ty = cands[0]
+                taps_in_view += 1
+                Input_Handler.click(tx, ty)
+                time.sleep(0.4)
+
+                sel_frame = Frame_Handler.get_frame(grayscale=False)
+                if configs.DEBUG and not probe_saved:
+                    Frame_Handler.save_frame(sel_frame, "obstacle_probe.png")
+                    probe_saved = True
+
+                x_rem, y_rem = self._find_remove_button(sel_frame)
+                if x_rem is None or y_rem is None:
+                    skipped.append((tx, ty))
+                    continue
+
+                obs_name = self._identify_selected_common_obstacle(sel_frame, y_rem=y_rem)
+                if obs_name is None:
+                    if configs.DEBUG:
+                        Frame_Handler.save_frame(sel_frame, "obstacle_skipped_special.png")
+                    logger.info(f"Preserving special/non-common obstacle at ({tx:.3f}, {ty:.3f}).")
+                    skipped.append((tx, ty))
+                    Input_Handler.click_exit(x=0.99, y=0.01, n=1, delay=0.1)
+                    continue
+
+                Input_Handler.click(x_rem, y_rem)
+                time.sleep(0.5)
+                post_frame = Frame_Handler.get_frame(grayscale=False)
+                x_rem_after, _ = self._find_remove_button(post_frame)
+                hud_ok = True
+                try:
+                    builders_now = self.get_home_builders(2)
+                except Exception:
+                    hud_ok = False
+                    builders_now = builders_before
+
+                if x_rem_after is None and hud_ok:
+                    logger.info(
+                        f"Removed common obstacle '{obs_name}' at ({tx:.3f}, {ty:.3f})."
+                    )
+                    removed.append(obs_name)
+                    if builders_now < builders_before:
+                        wait_deadline = time.time() + 35.0
+                        while time.time() < wait_deadline:
+                            time.sleep(1.5)
+                            try:
+                                if self.get_home_builders(2) >= builders_before:
+                                    break
+                            except Exception:
+                                break
+                else:
+                    skipped.append((tx, ty))
+                    Input_Handler.click_exit(x=0.99, y=0.01, n=2, delay=0.1)
+
+        return removed
 
     def _get_suggested_upgrade_template(self):
         template = render_text("Suggested upgrades", "SupercellMagic", 15, color=(195, 172, 166))
@@ -1757,13 +2008,30 @@ class Upgrader:
     # 📡 Upgrade Monitoring
     # ============================================================
     
-    def run_home_base(self, exclude_base=False, exclude_lab=False, exclude_pet=False):
+    def run_home_base(self, exclude_base=False, exclude_lab=False, exclude_pet=False, exclude_obstacles=False):
         import time
         
         Input_Handler.zoom(dir="out")
         Input_Handler.swipe_down()
         if not in_home_base():
             dismiss_reward_popups()
+
+        # Obstacle removal (clears space and collects Gem Boxes even when builders are busy)
+        obstacles_removed = []
+        if not exclude_obstacles and not Task_Handler.excluded("remove_obstacles", use_cached=True):
+            try:
+                try:
+                    self.get_home_builders(2)
+                except Exception:
+                    dismiss_reward_popups()
+                    self.get_home_builders(2)
+                obstacles_removed = self.remove_home_obstacles()
+                Input_Handler.zoom(dir="out")
+                Input_Handler.swipe_down()
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                logger.warning(f"Encountered an error while attempting to remove obstacles: {e}")
         
         # Building upgrades
         upgrades_started = []
@@ -1832,6 +2100,8 @@ class Upgrader:
 
         for upgrade in upgrades_started + lab_upgrades_started + pet_upgrades_started:
             send_notification(f"Started upgrading {upgrade}")
+        if obstacles_removed:
+            send_notification(f"Removed obstacles: {', '.join(obstacles_removed)}")
     
     def run_builder_base(self, exclude_base=False, exclude_lab=False):
         import time

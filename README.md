@@ -11,6 +11,7 @@
 * Resource collection 💰
 * Hero upgrades 👑
 * Building upgrades & automatic new building placement 🧱
+* Common obstacle & Gem Box removal (preserves special event obstacles) 🌲
 * Laboratory upgrades 🔬
 * Pet upgrades 🐶
 * Assistant assignment ⏩️
